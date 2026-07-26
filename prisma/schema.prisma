@@ -1,0 +1,161 @@
+// Prisma schema for the DKAS backend.
+//
+// Mirrors, table-for-table and column-for-column, the schema the Next.js
+// app used to manage by hand via raw SQL migrations. Row-level-security
+// policies and an auth-provider-triggered activity log from that era were
+// intentionally dropped — this backend does authorization in the Nest
+// layer instead, so none of that is ported.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Page {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique
+  title       Json     @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  description Json?    @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  seoImage    String?  @map("seo_image")
+  audioUrl    String?  @map("audio_url")
+  isPublished Boolean  @default(false) @map("is_published")
+  sortOrder   Int      @default(0) @map("sort_order")
+  subNav      Json     @default("[]") @map("sub_nav")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  blocks        ContentBlock[]
+  mapLocations  MapLocation[]
+
+  @@map("pages")
+}
+
+model ContentBlock {
+  id         String   @id @default(uuid()) @db.Uuid
+  pageId     String   @map("page_id") @db.Uuid
+  blockType  String   @map("block_type")
+  sortOrder  Int      @default(0) @map("sort_order")
+  content    Json     @default("{}")
+  isVisible  Boolean  @default(true) @map("is_visible")
+  label      String?
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@index([pageId, sortOrder])
+  @@map("content_blocks")
+}
+
+model MapLocation {
+  id            String   @id @default(uuid()) @db.Uuid
+  name          Json     @default("{\"vi\": \"\", \"en\": \"\"}")
+  description   Json?    @default("{\"vi\": \"\", \"en\": \"\"}")
+  lat           Decimal  @db.Decimal(10, 7)
+  lng           Decimal  @db.Decimal(11, 7)
+  iconColor     String   @default("#c8920c") @map("icon_color")
+  sortOrder     Int      @default(0) @map("sort_order")
+  isPublished   Boolean  @default(true) @map("is_published")
+  googleMapsUrl String?  @map("google_maps_url")
+  categoryId    String?  @map("category_id") @db.Uuid
+  pageId        String?  @map("page_id") @db.Uuid
+  createdAt     DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  category LocationCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  page     Page?              @relation(fields: [pageId], references: [id], onDelete: SetNull)
+
+  @@index([isPublished, sortOrder])
+  @@map("map_locations")
+}
+
+model LocationCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      Json     @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  locations MapLocation[]
+
+  @@map("location_categories")
+}
+
+model Media {
+  id          String   @id @default(uuid()) @db.Uuid
+  filename    String
+  storagePath String   @map("storage_path")
+  url         String
+  altVi       String?  @map("alt_vi")
+  altEn       String?  @map("alt_en")
+  fileType    String   @default("image") @map("file_type")
+  width       Int?
+  height      Int?
+  fileSize    Int?     @map("file_size")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@map("media")
+}
+
+model SiteSetting {
+  key       String   @id
+  value     Json     @default("{}")
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  @@map("site_settings")
+}
+
+model Post {
+  id          String   @id @default(uuid()) @db.Uuid
+  slug        String   @unique
+  title       Json     @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  summary     Json?    @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  content     Json?    @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  coverImage  String?  @map("cover_image")
+  isPublished Boolean  @default(false) @map("is_published")
+  publishedAt DateTime @default(now()) @map("published_at") @db.Timestamptz
+  categoryId  String?  @map("category_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  category PostCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+
+  @@index([slug])
+  @@index([isPublished, publishedAt])
+  @@map("posts")
+}
+
+model PostCategory {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        Json     @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  sortOrder   Int      @default(0) @map("sort_order")
+  slug        String?  @unique
+  description Json?    @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  posts Post[]
+
+  @@map("post_categories")
+}
+
+model ActivityLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  // No FK: the users table this used to reference was removed when the
+  // app switched to a single fixed admin account.
+  userId      String?  @map("user_id") @db.Uuid
+  userEmail   String   @map("user_email")
+  action      String
+  targetTable String   @map("target_table")
+  targetId    String?  @map("target_id") @db.Uuid
+  targetName  String?  @map("target_name")
+  oldData     Json?    @map("old_data")
+  newData     Json?    @map("new_data")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  @@index([userId])
+  @@map("activity_logs")
+}
