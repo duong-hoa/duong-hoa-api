@@ -22,4 +22,10 @@ export class SiteSettingsDto {
 
   @IsOptional()
   show_blog?: unknown
+
+  @IsOptional()
+  header_settings?: unknown
+
+  @IsOptional()
+  footer_settings?: unknown
 }

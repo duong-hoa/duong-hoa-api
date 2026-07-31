@@ -12,6 +12,8 @@ const ADMIN_SETTINGS_KEYS = [
   'social_links',
   'enabled_languages',
   'show_blog',
+  'header_settings',
+  'footer_settings',
 ]
 
 @Injectable()
@@ -78,12 +80,13 @@ export class SettingsService {
 
   // Mirrors src/lib/public-actions.ts:getPublicHeaderData.
   async getPublicHeaderData(locale: string, includeBlogCategories: boolean) {
-    const [blogSettings, enabledLanguages, showBlog, pages, categories] = await Promise.all([
+    const [blogSettings, enabledLanguages, showBlog, pages, categories, headerSettings] = await Promise.all([
       this.getBlogSettings(locale),
       this.getSetting<string[]>('enabled_languages'),
       this.isBlogVisible(),
       this.pagesService.getPublishedNavPages(),
       includeBlogCategories ? this.postsService.getPublishedPostCategories(locale) : Promise.resolve([]),
+      this.getSetting('header_settings'),
     ])
 
     return {
@@ -92,11 +95,16 @@ export class SettingsService {
       showBlog,
       pages,
       categories,
+      headerSettings,
     }
   }
 
   // Mirrors src/lib/public-actions.ts:getPublicFooterPages.
   async getPublicFooterPages() {
-    return this.pagesService.getPublishedNavPages()
+    const [pages, footerSettings] = await Promise.all([
+      this.pagesService.getPublishedNavPages(),
+      this.getSetting('footer_settings'),
+    ])
+    return { pages, footerSettings }
   }
 }
