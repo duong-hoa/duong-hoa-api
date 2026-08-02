@@ -47,7 +47,11 @@ function toCategoryJoin(category: Pick<PostCategory, 'id' | 'name' | 'slug'> | n
 
 function postInputToPrisma(input: PostInputDto) {
   const payload = compact(input as Record<string, unknown>)
-  const data: Prisma.PostUpdateInput = {}
+  // Unchecked variant so `categoryId` can be set as a plain scalar — the
+  // nested `category: { connect/disconnect }` relation form breaks on
+  // create (`disconnect` is only valid when updating an existing row), and
+  // this same builder is shared by both createPost and updatePost.
+  const data: Prisma.PostUncheckedUpdateInput = {}
   if ('slug' in payload) data.slug = payload.slug as string
   if ('title' in payload) data.title = payload.title as Prisma.InputJsonValue
   if ('summary' in payload) data.summary = payload.summary as Prisma.InputJsonValue
@@ -55,10 +59,7 @@ function postInputToPrisma(input: PostInputDto) {
   if ('cover_image' in payload) data.coverImage = payload.cover_image as string | null
   if ('is_published' in payload) data.isPublished = payload.is_published as boolean
   if ('published_at' in payload) data.publishedAt = new Date(payload.published_at as string)
-  if ('category_id' in payload) {
-    const categoryId = payload.category_id as string | null
-    data.category = categoryId ? { connect: { id: categoryId } } : { disconnect: true }
-  }
+  if ('category_id' in payload) data.categoryId = payload.category_id as string | null
   return data
 }
 
@@ -106,7 +107,7 @@ export class PostsService {
   }
 
   async createPost(input: PostInputDto) {
-    const post = await this.prisma.post.create({ data: postInputToPrisma(input) as Prisma.PostCreateInput })
+    const post = await this.prisma.post.create({ data: postInputToPrisma(input) as Prisma.PostUncheckedCreateInput })
     return toPostRow(post)
   }
 

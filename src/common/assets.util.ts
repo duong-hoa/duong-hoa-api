@@ -1,8 +1,11 @@
 // Direct port of src/lib/assets.ts from the Next.js app so stored object
 // paths (e.g. "uploads/example.jpg") resolve to public URLs the same way.
 
+// Uploads are served by this same backend now (LocalStorageService +
+// ServeStaticModule, at `<this>/uploads/...`) — set to its own public origin
+// so absolute URLs resolved here (e.g. for API responses) are reachable.
 function configuredAssetBases(): string[] {
-  return [process.env.NEXT_PUBLIC_ASSET_BASE_URL, process.env.S3_PUBLIC_BASE_URL]
+  return [process.env.NEXT_PUBLIC_ASSET_BASE_URL]
     .filter((value): value is string => Boolean(value))
     .map((value) => value.replace(/\/+$/, ''))
 }

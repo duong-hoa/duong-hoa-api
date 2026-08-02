@@ -4,6 +4,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import { PagesService } from '../pages/pages.service'
 import { PostsService } from '../posts/posts.service'
 import { SiteSettingsDto } from './dto/site-settings.dto'
+import { resolveAssetUrl } from '../common/assets.util'
 
 const ADMIN_SETTINGS_KEYS = [
   'site_title',
@@ -86,7 +87,7 @@ export class SettingsService {
       this.isBlogVisible(),
       this.pagesService.getPublishedNavPages(),
       includeBlogCategories ? this.postsService.getPublishedPostCategories(locale) : Promise.resolve([]),
-      this.getSetting('header_settings'),
+      this.getSetting<{ logo?: string } & Record<string, unknown>>('header_settings'),
     ])
 
     return {
@@ -95,16 +96,22 @@ export class SettingsService {
       showBlog,
       pages,
       categories,
-      headerSettings,
+      // `logo` is a stored relative path (e.g. "uploads/foo.png") like any
+      // other uploaded asset — resolve it here the same way translateContent
+      // already does for ContentBlock images, so the frontend doesn't have
+      // to remember to do it for this one settings-sourced field.
+      headerSettings: headerSettings ? { ...headerSettings, logo: resolveAssetUrl(headerSettings.logo) } : headerSettings,
     }
   }
 
   // Mirrors src/lib/public-actions.ts:getPublicFooterPages.
   async getPublicFooterPages() {
-    const [pages, footerSettings] = await Promise.all([
+    const [pages, footerSettings, contactEmail, socialLinks] = await Promise.all([
       this.pagesService.getPublishedNavPages(),
       this.getSetting('footer_settings'),
+      this.getSetting<string>('contact_email'),
+      this.getSetting('social_links'),
     ])
-    return { pages, footerSettings }
+    return { pages, footerSettings, contactEmail, socialLinks }
   }
 }

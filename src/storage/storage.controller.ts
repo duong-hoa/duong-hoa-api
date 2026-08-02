@@ -11,9 +11,9 @@ import {
 } from '@nestjs/common'
 import { FileInterceptor } from '@nestjs/platform-express'
 import { JwtAuthGuard } from '../auth/jwt-auth.guard'
-import { S3Service } from './s3.service'
+import { LocalStorageService } from './local-storage.service'
+import { resolveAssetUrl } from '../common/assets.util'
 
-// Direct port of src/app/api/data/storage/route.ts.
 function sanitizeObjectKey(input: string) {
   const key = input.replace(/\\/g, '/').replace(/^\/+/, '')
   if (!key || key.split('/').some((segment) => segment === '..')) {
@@ -25,7 +25,7 @@ function sanitizeObjectKey(input: string) {
 @UseGuards(JwtAuthGuard)
 @Controller('admin/storage')
 export class StorageController {
-  constructor(private readonly s3Service: S3Service) {}
+  constructor(private readonly storageService: LocalStorageService) {}
 
   @Post('upload')
   @UseInterceptors(FileInterceptor('file'))
@@ -36,8 +36,12 @@ export class StorageController {
 
     try {
       const key = sanitizeObjectKey(requestedPath)
-      await this.s3Service.uploadObject({ key, body: file.buffer, contentType: file.mimetype || undefined })
-      return { path: key, key }
+      await this.storageService.uploadObject({ key, body: file.buffer })
+      // `path` is the full public URL — stored as-is in ContentBlock/settings
+      // content going forward (per explicit request), so nothing needs to
+      // resolve it again at display time. `key` is still the raw relative
+      // storage path, kept for callers that need it (e.g. future delete support).
+      return { path: resolveAssetUrl(key), key }
     } catch (error) {
       if (error instanceof BadRequestException) throw error
       const message = error instanceof Error ? error.message : 'Upload failed'

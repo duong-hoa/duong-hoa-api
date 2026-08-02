@@ -1,16 +1,16 @@
-import { IsIn, IsOptional, IsString } from 'class-validator'
+import { IsEmail, IsIn, IsOptional, IsString, MinLength } from 'class-validator'
 
-// Mirrors the saveAccount() parameter shape from src/lib/admin-actions.ts.
 export class SaveAccountDto {
   @IsOptional()
   @IsString()
   id?: string
 
-  @IsString()
+  @IsEmail()
   email!: string
 
   @IsOptional()
   @IsString()
+  @MinLength(6)
   password?: string
 
   @IsString()

@@ -1,4 +1,4 @@
-import { IsBoolean, IsInt, IsOptional, IsString } from 'class-validator'
+import { IsBoolean, IsInt, IsOptional, IsString, IsUUID } from 'class-validator'
 
 // Mirrors PageInput from src/lib/repos/pages.ts. title/description/sub_nav
 // are arbitrary JSON blobs (localized text maps / anchor-menu arrays) so
@@ -32,4 +32,8 @@ export class PageInputDto {
 
   @IsOptional()
   sub_nav?: unknown
+
+  @IsOptional()
+  @IsUUID()
+  category_id?: string | null
 }

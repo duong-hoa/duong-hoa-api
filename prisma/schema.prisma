@@ -25,13 +25,31 @@ model Page {
   isPublished Boolean  @default(false) @map("is_published")
   sortOrder   Int      @default(0) @map("sort_order")
   subNav      Json     @default("[]") @map("sub_nav")
+  categoryId  String?  @map("category_id") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
   updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
 
   blocks        ContentBlock[]
   mapLocations  MapLocation[]
+  category      PageCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   @@map("pages")
+}
+
+// Groups pages for the public header's nav — pages sharing a category
+// collapse into one dropdown there (see Header.tsx). Deliberately has no
+// slug: unlike PostCategory, this isn't a browsable taxonomy route, purely
+// a nav-grouping label.
+model PageCategory {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      Json     @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  sortOrder Int      @default(0) @map("sort_order")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
+
+  pages Page[]
+
+  @@map("page_categories")
 }
 
 model ContentBlock {
@@ -142,10 +160,21 @@ model PostCategory {
   @@map("post_categories")
 }
 
+model AdminUser {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  passwordHash String   @map("password_hash")
+  displayName  String   @map("display_name")
+  role         String   @default("edit")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  @@map("admin_users")
+}
+
 model ActivityLog {
   id          String   @id @default(uuid()) @db.Uuid
-  // No FK: the users table this used to reference was removed when the
-  // app switched to a single fixed admin account.
+  // No FK: rows survive account deletion for audit purposes.
   userId      String?  @map("user_id") @db.Uuid
   userEmail   String   @map("user_email")
   action      String
