@@ -16,11 +16,6 @@ services:
       # name, not `localhost` — `.env`'s DATABASE_URL uses `localhost:<DB_HOST_PORT>`
       # for host-side tooling (psql, prisma CLI), which only resolves on the host.
       DATABASE_URL: postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@db:5432/${POSTGRES_DB:-dkas_backend}
-    volumes:
-      # Uploaded images (src/storage/LocalStorageService) — without this,
-      # every `docker compose up -d --build` recreates the container and
-      # wipes anything written to /app/uploads.
-      - dkas_backend_uploads:/app/uploads
     ports:
       - "${API_HOST_PORT:-32414}:4000"
     healthcheck:
@@ -56,4 +51,3 @@ services:
 
 volumes:
   dkas_backend_pgdata:
-  dkas_backend_uploads:
