@@ -2,13 +2,6 @@ import { HttpException, HttpStatus, Injectable } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { getTargetLangs } from './languages.util'
 
-// NestJS's default exception filter replaces any uncaught plain Error's
-// message with a generic "Internal server error" in the HTTP response (so
-// internals don't leak) — which silently swallowed the GEMINI_RATE_LIMIT /
-// GEMINI_NOT_CONFIGURED markers before they ever reached the frontend's
-// errMsg.includes(...) checks. HttpException is the one thing NestJS passes
-// the message straight through for, so re-throw as one of these instead of
-// letting the plain Error surface.
 function toHttpError(err: unknown): HttpException {
   const message = err instanceof Error ? err.message : String(err)
   if (message.includes('GEMINI_RATE_LIMIT')) return new HttpException(message, HttpStatus.TOO_MANY_REQUESTS)
@@ -46,11 +39,16 @@ function isLocalizedObject(val: unknown): val is Record<string, string> {
   return 'vi' in obj || 'en' in obj || 'ru' in obj || 'zh' in obj
 }
 
-// Direct port of src/lib/auto-translate.ts. This is the on-demand
-// AI/Google-Translate generator (used by the admin UI to auto-fill other
-// locales from a Vietnamese draft) — distinct from the request-time locale
-// *resolution* helper in src/common/localize.util.ts (translateContent),
-// which just picks the already-stored locale out of a { vi, en, ru, zh } map.
+function isHtmlText(text: string): boolean {
+  return /<[a-z][\s\S]*>/i.test(text)
+}
+
+function cleanHtmlOutput(html: string): string {
+  let cleaned = html.trim()
+  cleaned = cleaned.replace(/^```(?:html)?\s*/i, '').replace(/\s*```$/i, '').trim()
+  return cleaned
+}
+
 @Injectable()
 export class TranslateService {
   constructor(private readonly config: ConfigService) {}
@@ -61,54 +59,64 @@ export class TranslateService {
       throw new Error('GEMINI_NOT_CONFIGURED')
     }
 
-    const model = 'gemini-3.1-flash-lite'
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
+    // Supported production models with fallback
+    const models = ['gemini-2.0-flash', 'gemini-1.5-flash']
+    let lastError: Error | null = null
 
-    const body = {
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1 },
-      ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
-    }
+    for (const model of models) {
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`
 
-    const retries = 3
-    let delay = 1000
+      const body = {
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.1 },
+        ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
+      }
 
-    for (let attempt = 0; attempt < retries; attempt++) {
-      try {
-        const res = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
+      const retries = 2
+      let delay = 500
 
-        if (res.status === 429) {
-          if (attempt === retries - 1) throw new Error('GEMINI_RATE_LIMIT')
-          await new Promise((r) => setTimeout(r, delay))
-          delay *= 2
-          continue
-        }
+      for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+          const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          })
 
-        if (!res.ok) {
-          const errorText = await res.text()
-          if (res.status === 429 || errorText.includes('RESOURCE_EXHAUSTED') || errorText.includes('rate limit')) {
-            throw new Error('GEMINI_RATE_LIMIT')
+          if (res.status === 429) {
+            if (attempt === retries - 1) throw new Error('GEMINI_RATE_LIMIT')
+            await new Promise((r) => setTimeout(r, delay))
+            delay *= 2
+            continue
           }
-          throw new Error(`HTTP ${res.status}: ${errorText}`)
-        }
 
-        const data = await res.json()
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
-        return text.trim()
-      } catch (err) {
-        const errMsg = err instanceof Error ? err.message : String(err)
-        if (errMsg.includes('GEMINI_RATE_LIMIT')) throw err
-        if (attempt === retries - 1) throw err
-        await new Promise((r) => setTimeout(r, delay))
-        delay *= 1.5
+          if (!res.ok) {
+            const errorText = await res.text()
+            if (res.status === 429 || errorText.includes('RESOURCE_EXHAUSTED') || errorText.includes('rate limit')) {
+              throw new Error('GEMINI_RATE_LIMIT')
+            }
+            if (res.status === 404 || errorText.includes('not found')) {
+              lastError = new Error(`Model ${model} not found`)
+              break
+            }
+            throw new Error(`HTTP ${res.status}: ${errorText}`)
+          }
+
+          const data = await res.json()
+          const text = data.candidates?.[0]?.content?.parts?.[0]?.text || ''
+          return text.trim()
+        } catch (err) {
+          const errMsg = err instanceof Error ? err.message : String(err)
+          if (errMsg.includes('GEMINI_RATE_LIMIT')) throw err
+          if (errMsg.includes('not found')) break
+          if (attempt === retries - 1) lastError = err instanceof Error ? err : new Error(String(err))
+          await new Promise((r) => setTimeout(r, delay))
+          delay *= 1.5
+        }
       }
     }
 
-    throw new Error('Gemini API call failed.')
+    throw lastError || new Error('Gemini API call failed.')
   }
 
   private async translateWithGoogle(text: string, fromLang: string, toLang: string): Promise<string> {
@@ -165,16 +173,16 @@ export class TranslateService {
 
       const systemInstruction = `You are a professional translator. Translate the text from ${fromName} to ${toName}.
 Keep the translation natural, fluent, and accurate. Do not add any explanation, commentary, preamble, notes, or markdown formatting.
+Do not wrap output in quotation marks. Preserve any placeholders (like {var}, %s) exactly as they are.
 Output ONLY the raw translated text.`
 
       try {
         const translated = await this.callGemini(text, systemInstruction)
-        return translated || text
+        if (translated) return translated
       } catch (err) {
-        console.error(`Gemini translation error (${fromLang} → ${toLang}):`, err)
+        console.warn(`Gemini translation error (${fromLang} → ${toLang}), falling back to Google Translate:`, err instanceof Error ? err.message : err)
         const errMsg = err instanceof Error ? err.message : String(err)
-        if (errMsg.includes('GEMINI_RATE_LIMIT') || errMsg.includes('GEMINI_NOT_CONFIGURED')) throw toHttpError(err)
-        return text
+        if (errMsg.includes('GEMINI_NOT_CONFIGURED')) throw toHttpError(err)
       }
     }
 
@@ -190,29 +198,18 @@ Output ONLY the raw translated text.`
       const toName = LANGUAGE_NAMES[toLang] || toLang
 
       const systemInstruction = `You are a professional translator. Translate the HTML content from ${fromName} to ${toName}.
-You MUST preserve all HTML tags, tag structure, class names, IDs, and attributes exactly as they are. Translate ONLY the text content inside the HTML.
-Do NOT translate code, tags, or attributes. Do NOT wrap the output in markdown code blocks (such as \`\`\`html).
+You MUST preserve all HTML tags, tag structure, class names, IDs, inline styles, and attributes exactly as they are. Translate ONLY the text content inside the HTML.
+Do NOT translate code, tags, or attribute values. Do NOT wrap the output in markdown code blocks (such as \`\`\`html).
 Output ONLY the raw translated HTML.`
 
       try {
         const translated = await this.callGemini(html, systemInstruction)
-
-        let cleaned = translated
-        if (cleaned.startsWith('```html')) {
-          cleaned = cleaned.slice(7)
-        } else if (cleaned.startsWith('```')) {
-          cleaned = cleaned.slice(3)
-        }
-        if (cleaned.endsWith('```')) {
-          cleaned = cleaned.slice(0, -3)
-        }
-
-        return cleaned.trim() || html
+        const cleaned = cleanHtmlOutput(translated)
+        if (cleaned) return cleaned
       } catch (err) {
-        console.error(`Gemini HTML translation error (${fromLang} → ${toLang}):`, err)
+        console.warn(`Gemini HTML translation error (${fromLang} → ${toLang}), falling back to Google Translate:`, err instanceof Error ? err.message : err)
         const errMsg = err instanceof Error ? err.message : String(err)
-        if (errMsg.includes('GEMINI_RATE_LIMIT') || errMsg.includes('GEMINI_NOT_CONFIGURED')) throw toHttpError(err)
-        return html
+        if (errMsg.includes('GEMINI_NOT_CONFIGURED')) throw toHttpError(err)
       }
     }
 
@@ -227,13 +224,16 @@ Output ONLY the raw translated HTML.`
     engine: 'google' | 'gemini' = 'gemini',
   ): Promise<string[]> {
     const results: string[] = []
-    const fn = isHTML ? this.translateHTML.bind(this) : this.translateText.bind(this)
 
     for (let i = 0; i < texts.length; i++) {
-      const translated = await fn(texts[i], fromLang, toLang, engine)
+      const item = texts[i]
+      const useHtml = isHTML || isHtmlText(item)
+      const fn = useHtml ? this.translateHTML.bind(this) : this.translateText.bind(this)
+
+      const translated = await fn(item, fromLang, toLang, engine)
       results.push(translated)
       if (i < texts.length - 1) {
-        await new Promise((r) => setTimeout(r, engine === 'gemini' ? 200 : 350))
+        await new Promise((r) => setTimeout(r, engine === 'gemini' ? 150 : 250))
       }
     }
 
@@ -257,10 +257,13 @@ Output ONLY the raw translated HTML.`
         const sourceText = (val[fromLang] as string) || ''
         if (!sourceText.trim()) continue
 
+        const useHtml = isHtmlText(sourceText)
+        const fn = useHtml ? this.translateHTML.bind(this) : this.translateText.bind(this)
+
         const translated: Record<string, string> = { ...val }
         for (const lang of targets) {
-          translated[lang] = await this.translateText(sourceText, fromLang, lang, engine)
-          await new Promise((r) => setTimeout(r, engine === 'gemini' ? 200 : 350))
+          translated[lang] = await fn(sourceText, fromLang, lang, engine)
+          await new Promise((r) => setTimeout(r, engine === 'gemini' ? 150 : 250))
         }
         result[key] = translated
         continue
@@ -275,10 +278,13 @@ Output ONLY the raw translated HTML.`
             const sourceText = (item as Record<string, string>)[fromLang] || ''
             if (!sourceText.trim()) continue
 
+            const useHtml = isHtmlText(sourceText)
+            const fn = useHtml ? this.translateHTML.bind(this) : this.translateText.bind(this)
+
             const translated: Record<string, string> = { ...(item as Record<string, string>) }
             for (const lang of targets) {
-              translated[lang] = await this.translateText(sourceText, fromLang, lang, engine)
-              await new Promise((r) => setTimeout(r, engine === 'gemini' ? 200 : 350))
+              translated[lang] = await fn(sourceText, fromLang, lang, engine)
+              await new Promise((r) => setTimeout(r, engine === 'gemini' ? 150 : 250))
             }
             newArr[i] = translated
           } else if (item && typeof item === 'object' && !Array.isArray(item)) {
@@ -298,8 +304,10 @@ Output ONLY the raw translated HTML.`
             const langArr: string[] = []
             for (const text of sourceArr) {
               if (text.trim()) {
-                langArr.push(await this.translateText(text, fromLang, lang, engine))
-                await new Promise((r) => setTimeout(r, engine === 'gemini' ? 200 : 350))
+                const useHtml = isHtmlText(text)
+                const fn = useHtml ? this.translateHTML.bind(this) : this.translateText.bind(this)
+                langArr.push(await fn(text, fromLang, lang, engine))
+                await new Promise((r) => setTimeout(r, engine === 'gemini' ? 150 : 250))
               } else {
                 langArr.push(text)
               }
@@ -307,6 +315,8 @@ Output ONLY the raw translated HTML.`
             translated[lang] = langArr
           }
           result[key] = translated
+        } else {
+          result[key] = await this.translateContentObject(obj, fromLang, engine)
         }
       }
     }

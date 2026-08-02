@@ -28,6 +28,9 @@ export class S3StorageService {
   }
 
   async uploadObject(input: { key: string; body: Buffer }) {
+    if (!this.bucket) {
+      throw new Error('S3_NOT_CONFIGURED: S3_BUCKET environment variable is missing on backend')
+    }
     await this.client.send(
       new PutObjectCommand({ Bucket: this.bucket, Key: input.key, Body: input.body }),
     )
@@ -39,9 +42,7 @@ export class S3StorageService {
   }
 
   // Full public link for a stored key — built from S3_PUBLIC_BASE_URL (the
-  // bucket's own public URL or a CDN/custom domain in front of it), not
-  // NEXT_PUBLIC_ASSET_BASE_URL (that one's still the general-purpose
-  // relative-path resolver used elsewhere in the app).
+  // bucket's own public URL or a CDN/custom domain in front of it).
   publicUrl(key: string) {
     return this.publicBaseUrl ? `${this.publicBaseUrl}/${key}` : `/${key}`
   }
