@@ -13,7 +13,7 @@ export class S3StorageService {
   private readonly publicBaseUrl: string
 
   constructor(private readonly config: ConfigService) {
-    this.bucket = this.config.get<string>('S3_BUCKET') ?? ''
+    this.bucket = this.config.get<string>('S3_BUCKET') ?? 'dkas-media'
     this.publicBaseUrl = (this.config.get<string>('S3_PUBLIC_BASE_URL') ?? '').replace(/\/+$/, '')
 
     this.client = new S3Client({
