@@ -1,9 +1,10 @@
 import { Injectable, NotFoundException } from '@nestjs/common'
-import type { ContentBlock, Page, Prisma } from '@prisma/client'
+import type { ContentBlock, Page, PageCategory, Prisma } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { compact } from '../common/compact.util'
 import { translateContent } from '../common/localize.util'
 import { PageInputDto } from './dto/page-input.dto'
+import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
 
 // Row shapes returned to callers match the original snake_case Postgres
@@ -21,8 +22,29 @@ function toPageRow(page: Page) {
     is_published: page.isPublished,
     sort_order: page.sortOrder,
     sub_nav: page.subNav,
+    category_id: page.categoryId,
     created_at: page.createdAt,
     updated_at: page.updatedAt,
+  }
+}
+
+function toPageCategoryRow(category: PageCategory) {
+  return {
+    id: category.id,
+    name: category.name,
+    sort_order: category.sortOrder,
+    created_at: category.createdAt,
+    updated_at: category.updatedAt,
+  }
+}
+
+// Always present, with null fields when there's no linked category (left
+// join semantics) — matches the `page_categories`/`category` join aliases
+// used by the admin list vs. public nav queries respectively.
+function toCategoryJoin(category: Pick<PageCategory, 'id' | 'name'> | null) {
+  return {
+    id: category?.id ?? null,
+    name: (category?.name as Record<string, string> | null) ?? null,
   }
 }
 
@@ -42,7 +64,11 @@ function toBlockRow(block: ContentBlock) {
 
 function pageInputToPrisma(input: PageInputDto) {
   const payload = compact(input as Record<string, unknown>)
-  const data: Prisma.PageUpdateInput = {}
+  // Unchecked variant so `categoryId` can be set as a plain scalar — using
+  // the nested `category: { connect/disconnect }` relation form breaks on
+  // create (`disconnect` is only valid when updating an existing row), and
+  // this same builder is shared by both createPage and updatePage.
+  const data: Prisma.PageUncheckedUpdateInput = {}
   if ('slug' in payload) data.slug = payload.slug as string
   if ('title' in payload) data.title = payload.title as Prisma.InputJsonValue
   if ('description' in payload) data.description = payload.description as Prisma.InputJsonValue
@@ -51,6 +77,7 @@ function pageInputToPrisma(input: PageInputDto) {
   if ('is_published' in payload) data.isPublished = payload.is_published as boolean
   if ('sort_order' in payload) data.sortOrder = payload.sort_order as number
   if ('sub_nav' in payload) data.subNav = payload.sub_nav as Prisma.InputJsonValue
+  if ('category_id' in payload) data.categoryId = payload.category_id as string | null
   return data
 }
 
@@ -72,8 +99,11 @@ export class PagesService {
   // ── Admin ────────────────────────────────────────────────────────────
 
   async getAdminPages() {
-    const pages = await this.prisma.page.findMany({ orderBy: { sortOrder: 'asc' } })
-    return pages.map(toPageRow)
+    const pages = await this.prisma.page.findMany({
+      include: { category: { select: { id: true, name: true } } },
+      orderBy: { sortOrder: 'asc' },
+    })
+    return pages.map((page) => ({ ...toPageRow(page), page_categories: toCategoryJoin(page.category) }))
   }
 
   async getAdminPageBySlug(slug: string) {
@@ -87,7 +117,7 @@ export class PagesService {
   }
 
   async createPage(input: PageInputDto) {
-    const page = await this.prisma.page.create({ data: pageInputToPrisma(input) as Prisma.PageCreateInput })
+    const page = await this.prisma.page.create({ data: pageInputToPrisma(input) as Prisma.PageUncheckedCreateInput })
     return toPageRow(page)
   }
 
@@ -169,6 +199,38 @@ export class PagesService {
     )
   }
 
+  // ── Admin: page categories ───────────────────────────────────────────
+
+  async getPageCategories() {
+    const categories = await this.prisma.pageCategory.findMany({ orderBy: { sortOrder: 'asc' } })
+    return categories.map(toPageCategoryRow)
+  }
+
+  async createPageCategory(input: PageCategoryInputDto) {
+    const payload = compact(input as Record<string, unknown>)
+    const category = await this.prisma.pageCategory.create({
+      data: {
+        name: payload.name as Prisma.InputJsonValue,
+        sortOrder: payload.sort_order as number | undefined,
+      },
+    })
+    return toPageCategoryRow(category)
+  }
+
+  async updatePageCategory(id: string, input: PageCategoryInputDto) {
+    const payload = compact(input as Record<string, unknown>)
+    const data: Prisma.PageCategoryUpdateInput = { updatedAt: new Date() }
+    if ('name' in payload) data.name = payload.name as Prisma.InputJsonValue
+    if ('sort_order' in payload) data.sortOrder = payload.sort_order as number
+
+    const category = await this.prisma.pageCategory.update({ where: { id }, data }).catch(() => null)
+    return category ? toPageCategoryRow(category) : null
+  }
+
+  async deletePageCategory(id: string) {
+    await this.prisma.pageCategory.delete({ where: { id } })
+  }
+
   // ── Public ───────────────────────────────────────────────────────────
 
   async getPageMetaBySlug(slug: string) {
@@ -190,9 +252,21 @@ export class PagesService {
     const pages = await this.prisma.page.findMany({
       where: { isPublished: true },
       orderBy: { sortOrder: 'asc' },
-      select: { slug: true, title: true, subNav: true },
+      select: {
+        slug: true,
+        title: true,
+        subNav: true,
+        categoryId: true,
+        category: { select: { id: true, name: true } },
+      },
     })
-    return pages.map((page) => ({ slug: page.slug, title: page.title, sub_nav: page.subNav }))
+    return pages.map((page) => ({
+      slug: page.slug,
+      title: page.title,
+      sub_nav: page.subNav,
+      category_id: page.categoryId,
+      category: page.category ? toCategoryJoin(page.category) : null,
+    }))
   }
 
   async getPublishedPageBlocks(slug: string, locale = 'vi') {

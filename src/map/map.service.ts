@@ -44,7 +44,11 @@ function toLocationCategoryJoin(category: Pick<LocationCategory, 'id' | 'name'> 
 
 function mapLocationInputToPrisma(input: MapLocationInputDto) {
   const payload = compact(input as Record<string, unknown>)
-  const data: Prisma.MapLocationUpdateInput = {}
+  // Unchecked variant so categoryId/pageId can be set as plain scalars — the
+  // nested `{ connect/disconnect }` relation form breaks on create
+  // (`disconnect` is only valid when updating an existing row), and this
+  // same builder is shared by both createMapLocation and updateMapLocation.
+  const data: Prisma.MapLocationUncheckedUpdateInput = {}
   if ('name' in payload) data.name = payload.name as Prisma.InputJsonValue
   if ('description' in payload) data.description = payload.description as Prisma.InputJsonValue
   if ('lat' in payload) data.lat = payload.lat as number
@@ -53,14 +57,8 @@ function mapLocationInputToPrisma(input: MapLocationInputDto) {
   if ('sort_order' in payload) data.sortOrder = payload.sort_order as number
   if ('is_published' in payload) data.isPublished = payload.is_published as boolean
   if ('google_maps_url' in payload) data.googleMapsUrl = payload.google_maps_url as string | null
-  if ('category_id' in payload) {
-    const categoryId = payload.category_id as string | null
-    data.category = categoryId ? { connect: { id: categoryId } } : { disconnect: true }
-  }
-  if ('page_id' in payload) {
-    const pageId = payload.page_id as string | null
-    data.page = pageId ? { connect: { id: pageId } } : { disconnect: true }
-  }
+  if ('category_id' in payload) data.categoryId = payload.category_id as string | null
+  if ('page_id' in payload) data.pageId = payload.page_id as string | null
   return data
 }
 
@@ -99,7 +97,7 @@ export class MapService {
 
   async createMapLocation(input: MapLocationInputDto) {
     const location = await this.prisma.mapLocation.create({
-      data: mapLocationInputToPrisma(input) as Prisma.MapLocationCreateInput,
+      data: mapLocationInputToPrisma(input) as Prisma.MapLocationUncheckedCreateInput,
     })
     return toMapLocationRow(location)
   }

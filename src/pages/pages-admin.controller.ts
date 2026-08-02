@@ -2,6 +2,7 @@ import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@n
 import { JwtAuthGuard } from '../auth/jwt-auth.guard'
 import { PagesService } from './pages.service'
 import { PageInputDto } from './dto/page-input.dto'
+import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
 
 // Mirrors the page/block admin server actions in src/lib/admin-actions.ts.
@@ -38,6 +39,32 @@ export class PagesAdminController {
   @Post(':id/duplicate')
   duplicatePage(@Param('id') id: string, @Body() input: PageInputDto) {
     return this.pagesService.duplicatePage(id, input)
+  }
+}
+
+@UseGuards(JwtAuthGuard)
+@Controller('admin/page-categories')
+export class PageCategoriesAdminController {
+  constructor(private readonly pagesService: PagesService) {}
+
+  @Get()
+  getPageCategories() {
+    return this.pagesService.getPageCategories()
+  }
+
+  @Post()
+  createPageCategory(@Body() input: PageCategoryInputDto) {
+    return this.pagesService.createPageCategory(input)
+  }
+
+  @Patch(':id')
+  updatePageCategory(@Param('id') id: string, @Body() input: PageCategoryInputDto) {
+    return this.pagesService.updatePageCategory(id, input)
+  }
+
+  @Delete(':id')
+  deletePageCategory(@Param('id') id: string) {
+    return this.pagesService.deletePageCategory(id)
   }
 }
 

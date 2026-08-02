@@ -1,6 +1,19 @@
-import { Injectable } from '@nestjs/common'
+import { HttpException, HttpStatus, Injectable } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { getTargetLangs } from './languages.util'
+
+// NestJS's default exception filter replaces any uncaught plain Error's
+// message with a generic "Internal server error" in the HTTP response (so
+// internals don't leak) — which silently swallowed the GEMINI_RATE_LIMIT /
+// GEMINI_NOT_CONFIGURED markers before they ever reached the frontend's
+// errMsg.includes(...) checks. HttpException is the one thing NestJS passes
+// the message straight through for, so re-throw as one of these instead of
+// letting the plain Error surface.
+function toHttpError(err: unknown): HttpException {
+  const message = err instanceof Error ? err.message : String(err)
+  if (message.includes('GEMINI_RATE_LIMIT')) return new HttpException(message, HttpStatus.TOO_MANY_REQUESTS)
+  return new HttpException(message, HttpStatus.SERVICE_UNAVAILABLE)
+}
 
 const LANGUAGE_NAMES: Record<string, string> = {
   vi: 'Vietnamese',
@@ -45,7 +58,7 @@ export class TranslateService {
   private async callGemini(prompt: string, systemInstruction?: string): Promise<string> {
     const apiKey = this.config.get<string>('GEMINI_API_KEY')
     if (!apiKey) {
-      throw new Error('Gemini API key is missing. Please configure GEMINI_API_KEY in .env.')
+      throw new Error('GEMINI_NOT_CONFIGURED')
     }
 
     const model = 'gemini-3.1-flash-lite'
@@ -160,7 +173,7 @@ Output ONLY the raw translated text.`
       } catch (err) {
         console.error(`Gemini translation error (${fromLang} → ${toLang}):`, err)
         const errMsg = err instanceof Error ? err.message : String(err)
-        if (errMsg.includes('GEMINI_RATE_LIMIT')) throw err
+        if (errMsg.includes('GEMINI_RATE_LIMIT') || errMsg.includes('GEMINI_NOT_CONFIGURED')) throw toHttpError(err)
         return text
       }
     }
@@ -198,7 +211,7 @@ Output ONLY the raw translated HTML.`
       } catch (err) {
         console.error(`Gemini HTML translation error (${fromLang} → ${toLang}):`, err)
         const errMsg = err instanceof Error ? err.message : String(err)
-        if (errMsg.includes('GEMINI_RATE_LIMIT')) throw err
+        if (errMsg.includes('GEMINI_RATE_LIMIT') || errMsg.includes('GEMINI_NOT_CONFIGURED')) throw toHttpError(err)
         return html
       }
     }

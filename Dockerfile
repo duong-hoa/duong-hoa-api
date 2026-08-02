@@ -59,6 +59,12 @@ COPY --from=builder --chown=node:node /app/dist ./dist
 COPY --from=builder --chown=node:node /app/prisma ./prisma
 COPY --from=builder --chown=node:node /app/package.json ./package.json
 
+# Uploaded files (src/storage/LocalStorageService) land here; docker-compose.yml
+# mounts this as a volume so they survive the container being recreated on
+# every deploy. Pre-create + chown before switching users so a fresh volume
+# mount (which takes root's ownership by default) still ends up writable.
+RUN mkdir -p ./uploads && chown node:node ./uploads
+
 USER node
 
 EXPOSE 4000
