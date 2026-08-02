@@ -1,7 +1,5 @@
 import { Module } from '@nestjs/common'
-import { ConfigModule, ConfigService } from '@nestjs/config'
-import { ServeStaticModule } from '@nestjs/serve-static'
-import { join, resolve } from 'path'
+import { ConfigModule } from '@nestjs/config'
 import { PrismaModule } from './prisma/prisma.module'
 import { AuthModule } from './auth/auth.module'
 import { PagesModule } from './pages/pages.module'
@@ -18,18 +16,6 @@ import { TranslateModule } from './translate/translate.module'
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true }),
-    // Publicly serves whatever LocalStorageService (src/storage) writes to
-    // disk — same directory, so an upload is reachable at
-    // `<backend origin>/uploads/<path>` right after it's saved.
-    ServeStaticModule.forRootAsync({
-      inject: [ConfigService],
-      useFactory: (config: ConfigService) => [
-        {
-          rootPath: resolve(config.get<string>('UPLOADS_DIR') || join(process.cwd(), 'uploads')),
-          serveRoot: '/uploads',
-        },
-      ],
-    }),
     PrismaModule,
     AuthModule,
     PagesModule,
