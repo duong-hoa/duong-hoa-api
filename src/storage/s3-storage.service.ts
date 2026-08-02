@@ -41,9 +41,16 @@ export class S3StorageService {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key })).catch(() => undefined)
   }
 
-  // Full public link for a stored key — built from S3_PUBLIC_BASE_URL (the
-  // bucket's own public URL or a CDN/custom domain in front of it).
+  // Full public link for a stored key — formatted as domain/bucket/file
   publicUrl(key: string) {
-    return this.publicBaseUrl ? `${this.publicBaseUrl}/${key}` : `/${key}`
+    const cleanKey = key.replace(/^\/+/, '')
+    if (this.publicBaseUrl) {
+      const base = this.publicBaseUrl.replace(/\/+$/, '')
+      if (!this.bucket || base.endsWith(`/${this.bucket}`)) {
+        return `${base}/${cleanKey}`
+      }
+      return `${base}/${this.bucket}/${cleanKey}`
+    }
+    return this.bucket ? `/${this.bucket}/${cleanKey}` : `/${cleanKey}`
   }
 }
