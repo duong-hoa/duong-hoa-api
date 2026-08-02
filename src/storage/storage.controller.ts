@@ -18,7 +18,7 @@ function sanitizeObjectKey(input: string) {
   if (!key || key.split('/').some((segment) => segment === '..')) {
     throw new BadRequestException('Invalid upload path')
   }
-  return key.startsWith('uploads/') ? key : `uploads/${key}`
+  return key
 }
 
 @UseGuards(JwtAuthGuard)
