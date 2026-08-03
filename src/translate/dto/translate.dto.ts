@@ -1,4 +1,4 @@
-import { IsArray, IsBoolean, IsIn, IsOptional, IsString } from 'class-validator'
+import { IsArray, IsBoolean, IsIn, IsObject, IsOptional, IsString } from 'class-validator'
 
 export class TranslateTextDto {
   @IsString()
@@ -47,5 +47,12 @@ export class TranslateContentDto {
 
   // The block/page content object to translate — arbitrary JSON, same as
   // translateContentObject()'s `content` parameter in src/lib/auto-translate.ts.
+  // Needs at least one class-validator decorator, or NestJS's global
+  // ValidationPipe({ whitelist: true }) silently strips this property
+  // entirely before the controller ever sees it — every /admin/translate/content
+  // call was returning `{}` because of exactly this (every other DTO with an
+  // untyped JSON-blob field has at least a bare @IsOptional(), which was the
+  // difference that kept them working).
+  @IsObject()
   content!: Record<string, unknown>
 }

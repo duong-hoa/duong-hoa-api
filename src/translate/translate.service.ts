@@ -28,15 +28,25 @@ const NON_TRANSLATABLE_KEYS = new Set([
   'parallax', 'bodyColumns', 'miniCardsLayout', 'columns', 'cardStyle',
   'contentAlign', 'src', 'href', 'variant', 'is3d', 'fancyboxGroup',
   'sort_order', 'is_visible', 'block_type', 'page_id',
-  'images', 'galleryBelow',
+  'images', 'galleryBelow', 'youtubeId', 'ornamentPosition', 'prefix',
+  'iconKey', 'number', 'priceVnd',
 ])
 
 const URL_KEYS = new Set(['src', 'href', 'image', 'cover_image', 'seo_image'])
 
+// Only matches the scalar-text localized shape ({ vi: 'text', en: 'text' }),
+// not the array-of-per-locale-arrays shape ({ vi: ['a','b'], en: [] }) used
+// for translatable paragraph lists (body, items, etc.) — those two shapes
+// both have vi/en/ru/zh keys, but only this one holds plain strings under
+// them, so we also check that any present key's value is actually a string.
+// Without this check, an array-shaped field would still match here (wrongly)
+// and crash on `sourceText.trim()` a few lines down, since sourceText would
+// be an array, not a string — that crash is what this guards against.
 function isLocalizedObject(val: unknown): val is Record<string, string> {
   if (!val || typeof val !== 'object' || Array.isArray(val)) return false
   const obj = val as Record<string, unknown>
-  return 'vi' in obj || 'en' in obj || 'ru' in obj || 'zh' in obj
+  const keys = ['vi', 'en', 'ru', 'zh'] as const
+  return keys.some((k) => k in obj) && keys.every((k) => !(k in obj) || typeof obj[k] === 'string')
 }
 
 function isHtmlText(text: string): boolean {
