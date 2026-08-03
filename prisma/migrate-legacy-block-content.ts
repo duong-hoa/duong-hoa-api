@@ -24,6 +24,17 @@ function wrapArray(val: unknown): unknown {
   return { vi: val, en: [], ru: [], zh: [] }
 }
 
+// For array-of-paragraph fields where each element is its OWN localized unit
+// (e.g. split/split_cards' `body`: [{vi,en,ru,zh}, ...], edited one row at a
+// time via getLangArrayValue/setLangArrayValue) — as opposed to wrapArray()'s
+// shape, where the WHOLE array is localized at once (e.g. special_art_section/
+// special_product_line's `body`: {vi:[...], en:[...]}, edited via getLangArray).
+// Mixing these up reproduces the "body.map is not a function" bug fixed 2026-08-04.
+function wrapParagraphArray(val: unknown): unknown {
+  if (!Array.isArray(val)) return val
+  return val.map((item) => (typeof item === 'string' ? wrapScalar(item) : item))
+}
+
 function wrapItems<T extends Record<string, unknown>>(
   arr: unknown,
   fields: Partial<Record<keyof T, 'scalar' | 'array'>>,
@@ -50,6 +61,7 @@ const BLOCK_FIELD_MAP: Record<
   {
     scalar?: string[]
     array?: string[]
+    paragraphArray?: string[]
     items?: Record<string, { scalar?: string[]; array?: string[] }>
   }
 > = {
@@ -59,7 +71,7 @@ const BLOCK_FIELD_MAP: Record<
   },
   split: {
     scalar: ['eyebrow', 'title'],
-    array: ['body'],
+    paragraphArray: ['body'],
     items: {
       infoCards: { scalar: ['title', 'body'] },
       miniCards: { scalar: ['label', 'text'] },
@@ -67,7 +79,7 @@ const BLOCK_FIELD_MAP: Record<
   },
   split_cards: {
     scalar: ['eyebrow', 'title', 'subtitle'],
-    array: ['body'],
+    paragraphArray: ['body'],
     items: { infoCards: { scalar: ['title', 'body'] } },
   },
   marquee: {
@@ -144,6 +156,13 @@ async function main() {
       if (Array.isArray(content[key])) {
         content[key] = wrapArray(content[key])
         touched = true
+      }
+    }
+    for (const key of map.paragraphArray ?? []) {
+      if (Array.isArray(content[key])) {
+        const before = JSON.stringify(content[key])
+        content[key] = wrapParagraphArray(content[key])
+        if (JSON.stringify(content[key]) !== before) touched = true
       }
     }
     for (const [key, fields] of Object.entries(map.items ?? {})) {
