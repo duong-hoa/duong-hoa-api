@@ -35,17 +35,33 @@ function wrapParagraphArray(val: unknown): unknown {
   return val.map((item) => (typeof item === 'string' ? wrapScalar(item) : item))
 }
 
-function wrapItems<T extends Record<string, unknown>>(
+// BUG FIXED 2026-08-04: this took `fields` shaped like `{ scalar: [...],
+// array: [...] }` (kind -> field names) — which is exactly how every call
+// site below and every BLOCK_FIELD_MAP `items` entry defines it — but its
+// body did `Object.entries(fields)` expecting the INVERSE shape (field name
+// -> kind), so `key` was literally the string 'scalar'/'array', which is
+// never a real property on the item, and `if (!(key in obj)) continue`
+// skipped every iteration. Net effect: wrapItems() silently no-op'd for
+// EVERY block type ever migrated — nested item fields (special_product_line's
+// featureColumns[].title/items, special_gallery/special_product_line's
+// images[].alt, hero's buttons[].label, etc.) never actually got wrapped,
+// even though the script reported blocks as "updated" (top-level scalar/array
+// fields WERE wrapped correctly by the separate top-level loops in main() —
+// only the nested-items path was dead code). This is what let
+// special_product_line's featureColumns sit unwrapped indefinitely.
+function wrapItems(
   arr: unknown,
-  fields: Partial<Record<keyof T, 'scalar' | 'array'>>,
+  fields: { scalar?: string[]; array?: string[] },
 ): unknown {
   if (!Array.isArray(arr)) return arr
   return arr.map((item) => {
     if (!item || typeof item !== 'object') return item
     const obj = { ...(item as Record<string, unknown>) }
-    for (const [key, kind] of Object.entries(fields)) {
-      if (!(key in obj)) continue
-      obj[key] = kind === 'array' ? wrapArray(obj[key]) : wrapScalar(obj[key])
+    for (const key of fields.scalar ?? []) {
+      if (key in obj) obj[key] = wrapScalar(obj[key])
+    }
+    for (const key of fields.array ?? []) {
+      if (key in obj) obj[key] = wrapArray(obj[key])
     }
     return obj
   })
@@ -168,7 +184,7 @@ async function main() {
     for (const [key, fields] of Object.entries(map.items ?? {})) {
       if (Array.isArray(content[key])) {
         const before = JSON.stringify(content[key])
-        content[key] = wrapItems(content[key], fields as Record<string, 'scalar' | 'array'>)
+        content[key] = wrapItems(content[key], fields as { scalar?: string[]; array?: string[] })
         if (JSON.stringify(content[key]) !== before) touched = true
       }
     }
