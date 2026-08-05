@@ -69,8 +69,18 @@ export class TranslateService {
       throw new Error('GEMINI_NOT_CONFIGURED')
     }
 
-    // Supported production models with fallback
-    const models = ['gemini-2.0-flash', 'gemini-1.5-flash']
+    // Supported production models with fallback. `gemini-2.0-flash` and
+    // `gemini-1.5-flash` were both retired by Google (404 "no longer
+    // available") — confirmed live 2026-08-05, which is what was actually
+    // causing "Dịch tự động" to silently return only-Vietnamese content:
+    // every call fell through Gemini, then further fell through to the
+    // Google Translate fallback below, and in some environments that fallback
+    // itself is unreachable (network egress), so translateWithGoogle's own
+    // catch-and-return-original-text safety net kicked in — the net result
+    // being every locale silently ending up with the original Vietnamese
+    // text and no error surfaced anywhere. Re-check https://ai.google.dev/gemini-api/docs/models
+    // periodically; Google deprecates model names faster than most APIs.
+    const models = ['gemini-2.5-flash', 'gemini-2.5-flash-lite']
     let lastError: Error | null = null
 
     for (const model of models) {

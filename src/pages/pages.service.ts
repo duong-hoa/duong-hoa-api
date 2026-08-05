@@ -243,9 +243,9 @@ export class PagesService {
   }
 
   async getPublishedPageStatus(slug: string) {
-    const page = await this.prisma.page.findUnique({ where: { slug }, select: { id: true, isPublished: true } })
+    const page = await this.prisma.page.findUnique({ where: { slug }, select: { id: true, isPublished: true, audioUrl: true } })
     if (!page) return null
-    return { id: page.id, is_published: page.isPublished }
+    return { id: page.id, is_published: page.isPublished, audio_url: page.audioUrl }
   }
 
   async getPublishedNavPages() {
