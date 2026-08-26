@@ -28,4 +28,9 @@ export class SettingsPublicController {
   async isBlogVisible() {
     return { show_blog: await this.settingsService.isBlogVisible() }
   }
+
+  @Get('settings')
+  getPublicSettings() {
+    return this.settingsService.getPublicSettings()
+  }
 }
