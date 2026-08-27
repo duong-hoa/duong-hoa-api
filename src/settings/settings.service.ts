@@ -81,14 +81,17 @@ export class SettingsService {
 
   // Mirrors src/lib/public-actions.ts:getPublicHeaderData.
   async getPublicHeaderData(locale: string, includeBlogCategories: boolean) {
-    const [blogSettings, enabledLanguages, showBlog, pages, categories, headerSettings] = await Promise.all([
+    const [blogSettings, enabledLanguages, showBlog, pages, categories, headerSettings, siteTitle] = await Promise.all([
       this.getBlogSettings(locale),
       this.getSetting<string[]>('enabled_languages'),
       this.isBlogVisible(),
       this.pagesService.getPublishedNavPages(),
       includeBlogCategories ? this.postsService.getPublishedPostCategories(locale) : Promise.resolve([]),
       this.getSetting<{ logo?: string } & Record<string, unknown>>('header_settings'),
+      this.getSetting<Record<string, string>>('site_title'),
     ])
+
+    const resolvedLogo = resolveAssetUrl(headerSettings?.logo)
 
     return {
       blogTitle: blogSettings?.list_title ?? '',
@@ -96,11 +99,13 @@ export class SettingsService {
       showBlog,
       pages,
       categories,
-      // `logo` is a stored relative path (e.g. "uploads/foo.png") like any
-      // other uploaded asset — resolve it here the same way translateContent
-      // already does for ContentBlock images, so the frontend doesn't have
-      // to remember to do it for this one settings-sourced field.
-      headerSettings: headerSettings ? { ...headerSettings, logo: resolveAssetUrl(headerSettings.logo) } : headerSettings,
+      siteTitle: siteTitle ?? { vi: '', en: '' },
+      favicon: resolvedLogo || '',
+      // `logo` is stored relative path (e.g. "uploads/foo.png")
+      headerSettings: headerSettings ? {
+        ...headerSettings,
+        logo: resolvedLogo,
+      } : headerSettings,
     }
   }
 
@@ -113,5 +118,33 @@ export class SettingsService {
       this.getSetting('social_links'),
     ])
     return { pages, footerSettings, contactEmail, socialLinks }
+  }
+
+  // Composite public settings payload for public metadata, SEO, and headers
+  async getPublicSettings() {
+    const [siteTitle, siteDesc, headerSettings, footerSettings, contactEmail, socialLinks] = await Promise.all([
+      this.getSetting<Record<string, string>>('site_title'),
+      this.getSetting<Record<string, string>>('site_description'),
+      this.getSetting<{ logo?: string } & Record<string, unknown>>('header_settings'),
+      this.getSetting('footer_settings'),
+      this.getSetting<string>('contact_email'),
+      this.getSetting('social_links'),
+    ])
+
+    const resolvedLogo = resolveAssetUrl(headerSettings?.logo)
+    const resolvedHeader = headerSettings ? {
+      ...headerSettings,
+      logo: resolvedLogo,
+    } : headerSettings
+
+    return {
+      site_title: siteTitle ?? { vi: '', en: '' },
+      site_description: siteDesc ?? { vi: '', en: '' },
+      header_settings: resolvedHeader,
+      footer_settings: footerSettings,
+      contact_email: contactEmail,
+      social_links: socialLinks,
+      favicon: resolvedLogo || '',
+    }
   }
 }
