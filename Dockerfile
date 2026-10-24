@@ -2,7 +2,7 @@
 # Stage 1: Dependencies Installation Stage
 # ============================================
 
-ARG NODE_VERSION=24.13.0-slim
+ARG NODE_VERSION=24.22.1-alpine
 
 FROM node:${NODE_VERSION} AS dependencies
 
@@ -28,8 +28,7 @@ FROM node:${NODE_VERSION} AS builder
 
 WORKDIR /app
 
-RUN apt-get update -y && apt-get install -y --no-install-recommends openssl \
-  && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache openssl
 
 COPY --from=dependencies /app/node_modules ./node_modules
 COPY . .
@@ -51,8 +50,7 @@ ENV NODE_ENV=production
 ENV PORT=4000
 
 # Prisma's query engine needs libssl to be present and detectable at runtime.
-RUN apt-get update -y && apt-get install -y --no-install-recommends openssl \
-  && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache openssl
 
 COPY --from=builder --chown=node:node /app/node_modules ./node_modules
 COPY --from=builder --chown=node:node /app/dist ./dist
