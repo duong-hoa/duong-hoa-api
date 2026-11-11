@@ -35,7 +35,8 @@ export function translateContent<T = unknown>(content: T, locale: string): T {
       }
       const obj = val as Record<string, unknown>
       if ('vi' in obj || 'en' in obj || 'ru' in obj || 'zh' in obj) {
-        return (obj as Record<string, string>)[locale] ?? (obj as Record<string, string>).vi ?? ''
+        const localized = obj[locale]
+        return typeof localized === 'string' && !localized.trim() ? (obj.vi ?? '') : (localized ?? obj.vi ?? '')
       }
       const res: Record<string, unknown> = {}
       for (const k in obj) {
