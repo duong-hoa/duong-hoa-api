@@ -1,11 +1,14 @@
-import { Injectable, NotFoundException } from '@nestjs/common'
-import type { ContentBlock, Page, PageCategory, Prisma } from '@prisma/client'
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { randomUUID } from 'node:crypto'
+import { Prisma } from '@prisma/client'
+import type { ContentBlock, Page, PageCategory } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { compact } from '../common/compact.util'
 import { translateContent } from '../common/localize.util'
 import { PageInputDto } from './dto/page-input.dto'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
+import { CreatePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
 
 // Row shapes returned to callers match the original snake_case Postgres
 // columns from src/lib/repos/pages.ts exactly (not Prisma's camelCase model
@@ -20,6 +23,8 @@ function toPageRow(page: Page) {
     seo_image: page.seoImage,
     audio_url: page.audioUrl,
     is_published: page.isPublished,
+    is_template: page.isTemplate,
+    template_name: page.templateName,
     sort_order: page.sortOrder,
     sub_nav: page.subNav,
     category_id: page.categoryId,
@@ -100,6 +105,7 @@ export class PagesService {
 
   async getAdminPages() {
     const pages = await this.prisma.page.findMany({
+      where: { isTemplate: false },
       include: { category: { select: { id: true, name: true } } },
       orderBy: { sortOrder: 'asc' },
     })
@@ -122,6 +128,8 @@ export class PagesService {
   }
 
   async updatePage(id: string, input: PageInputDto) {
+    const current = await this.prisma.page.findUnique({ where: { id }, select: { isTemplate: true } })
+    if (current?.isTemplate && input.is_published) throw new BadRequestException('Mẫu trang không thể xuất bản trực tiếp')
     const page = await this.prisma.page
       .update({ where: { id }, data: { ...pageInputToPrisma(input), updatedAt: new Date() } })
       .catch(() => null)
@@ -136,16 +144,19 @@ export class PagesService {
     return this.prisma.$transaction(async (tx) => {
       const page = await tx.page.findUnique({ where: { id } })
       if (!page) throw new NotFoundException('Không tìm thấy trang gốc')
+      const description = input.description === undefined ? page.description : input.description
 
       const created = await tx.page.create({
         data: {
           slug: input.slug as string,
           title: (input.title ?? page.title) as Prisma.InputJsonValue,
-          description: (input.description ?? page.description) as Prisma.InputJsonValue,
+          description: description === null ? Prisma.DbNull : description as Prisma.InputJsonValue,
           seoImage: input.seo_image ?? page.seoImage,
           audioUrl: input.audio_url ?? page.audioUrl,
           isPublished: false,
           sortOrder: input.sort_order ?? page.sortOrder + 5,
+          subNav: page.subNav as Prisma.InputJsonValue,
+          categoryId: page.categoryId,
         },
       })
 
@@ -165,6 +176,79 @@ export class PagesService {
 
       return toPageRow(created)
     })
+  }
+
+  // Templates are unpublished page records so the existing block editor,
+  // localization and preview can be reused without serializing lossy copies.
+  async getPageTemplates() {
+    const templates = await this.prisma.page.findMany({
+      where: { isTemplate: true },
+      include: { _count: { select: { blocks: true } } },
+      orderBy: { createdAt: 'desc' },
+    })
+    return templates.map((template) => ({ ...toPageRow(template), block_count: template._count.blocks }))
+  }
+
+  async createPageTemplate(input: CreatePageTemplateDto) {
+    const name = input.name.trim()
+    if (!name) throw new BadRequestException('Vui lòng nhập tên mẫu trang')
+    if (input.source_page_id && input.blocks?.length) throw new BadRequestException('Chọn trang nguồn hoặc bộ block ban đầu')
+    return this.prisma.$transaction(async (tx) => {
+      const source = input.source_page_id ? await tx.page.findUnique({ where: { id: input.source_page_id }, include: { blocks: { orderBy: { sortOrder: 'asc' } } } }) : null
+      if (input.source_page_id && !source) throw new NotFoundException('Không tìm thấy trang nguồn')
+      const created = await tx.page.create({ data: {
+        slug: `mau-trang-${randomUUID()}`,
+        title: (source?.title ?? { vi: name, en: '', ru: '', zh: '' }) as Prisma.InputJsonValue,
+        ...(source ? { description: source.description === null ? Prisma.DbNull : source.description as Prisma.InputJsonValue } : {}),
+        seoImage: source?.seoImage ?? null, audioUrl: source?.audioUrl ?? null,
+        subNav: (source?.subNav ?? []) as Prisma.InputJsonValue, categoryId: source?.categoryId ?? null,
+        isPublished: false, isTemplate: true, templateName: name,
+      } })
+      if (source) {
+        for (const block of source.blocks) await tx.contentBlock.create({ data: {
+          pageId: created.id, blockType: block.blockType, sortOrder: block.sortOrder,
+          content: block.content as Prisma.InputJsonValue, isVisible: block.isVisible, label: block.label,
+        } })
+      } else {
+        for (const [i, block] of (input.blocks ?? []).entries()) {
+          if (!block.block_type) throw new BadRequestException('Block mẫu thiếu loại bố cục')
+          await tx.contentBlock.create({ data: {
+            pageId: created.id, blockType: block.block_type, sortOrder: block.sort_order ?? i,
+            content: (block.content ?? {}) as Prisma.InputJsonValue, isVisible: block.is_visible ?? true, label: block.label,
+          } })
+        }
+      }
+      return toPageRow(created)
+    })
+  }
+
+  async renamePageTemplate(id: string, name: string) {
+    const trimmed = name.trim()
+    if (!trimmed) throw new BadRequestException('Vui lòng nhập tên mẫu trang')
+    const template = await this.prisma.page.findFirst({ where: { id, isTemplate: true } })
+    if (!template) throw new NotFoundException('Không tìm thấy mẫu trang')
+    return toPageRow(await this.prisma.page.update({ where: { id }, data: { templateName: trimmed, updatedAt: new Date() } }))
+  }
+
+  async deletePageTemplate(id: string) {
+    const template = await this.prisma.page.findFirst({ where: { id, isTemplate: true }, select: { id: true } })
+    if (!template) throw new NotFoundException('Không tìm thấy mẫu trang')
+    await this.prisma.page.delete({ where: { id } })
+    return { success: true }
+  }
+
+  async clonePageTemplate(id: string, name: string) {
+    const template = await this.prisma.page.findFirst({ where: { id, isTemplate: true }, select: { id: true } })
+    if (!template) throw new NotFoundException('Không tìm thấy mẫu trang')
+    return this.createPageTemplate({ name, source_page_id: id })
+  }
+
+  async usePageTemplate(id: string, input: UsePageTemplateDto) {
+    const template = await this.prisma.page.findFirst({ where: { id, isTemplate: true }, select: { id: true } })
+    if (!template) throw new NotFoundException('Không tìm thấy mẫu trang')
+    const existing = await this.prisma.page.findUnique({ where: { slug: input.slug }, select: { id: true } })
+    if (existing) throw new BadRequestException('Đường dẫn trang đã tồn tại')
+    return this.duplicatePage(id, { slug: input.slug, title: input.title })
   }
 
   // ── Admin: blocks ────────────────────────────────────────────────────
@@ -235,7 +319,7 @@ export class PagesService {
 
   async getPageMetaBySlug(slug: string) {
     const page = await this.prisma.page.findFirst({
-      where: { slug, isPublished: true },
+      where: { slug, isPublished: true, isTemplate: false },
       select: { title: true, description: true, seoImage: true },
     })
     if (!page) return null
@@ -243,14 +327,14 @@ export class PagesService {
   }
 
   async getPublishedPageStatus(slug: string) {
-    const page = await this.prisma.page.findUnique({ where: { slug }, select: { id: true, isPublished: true, audioUrl: true } })
+    const page = await this.prisma.page.findFirst({ where: { slug, isTemplate: false }, select: { id: true, isPublished: true, audioUrl: true } })
     if (!page) return null
     return { id: page.id, is_published: page.isPublished, audio_url: page.audioUrl }
   }
 
   async getPublishedNavPages() {
     const pages = await this.prisma.page.findMany({
-      where: { isPublished: true },
+      where: { isPublished: true, isTemplate: false },
       orderBy: { sortOrder: 'asc' },
       select: {
         slug: true,
@@ -271,7 +355,7 @@ export class PagesService {
 
   async getPublishedPageBlocks(slug: string, locale = 'vi') {
     const page = await this.prisma.page.findFirst({
-      where: { slug, isPublished: true },
+      where: { slug, isPublished: true, isTemplate: false },
       select: { id: true, audioUrl: true },
     })
     if (!page) return null
