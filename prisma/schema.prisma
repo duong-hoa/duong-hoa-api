@@ -23,6 +23,8 @@ model Page {
   seoImage    String?  @map("seo_image")
   audioUrl    String?  @map("audio_url")
   isPublished Boolean  @default(false) @map("is_published")
+  isTemplate  Boolean  @default(false) @map("is_template")
+  templateName String? @map("template_name")
   sortOrder   Int      @default(0) @map("sort_order")
   subNav      Json     @default("[]") @map("sub_nav")
   categoryId  String?  @map("category_id") @db.Uuid
@@ -34,6 +36,7 @@ model Page {
   category      PageCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
 
   @@map("pages")
+  @@index([isTemplate, updatedAt])
 }
 
 // Groups pages for the public header's nav — pages sharing a category

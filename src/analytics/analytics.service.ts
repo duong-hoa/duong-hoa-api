@@ -18,7 +18,7 @@ export class AnalyticsService {
 
   private async getContentCreatedAtStats() {
     const [pages, posts, mapLocations] = await Promise.all([
-      this.prisma.page.findMany({ select: { createdAt: true } }),
+      this.prisma.page.findMany({ where: { isTemplate: false }, select: { createdAt: true } }),
       this.prisma.post.findMany({ select: { createdAt: true } }),
       this.prisma.mapLocation.findMany({ select: { createdAt: true } }),
     ])
