@@ -1,0 +1,46 @@
+// Run only against a disposable local PostgreSQL test database after migrations.
+const assert = require('node:assert/strict')
+const { randomUUID } = require('node:crypto')
+const { PrismaService } = require('../dist/prisma/prisma.service')
+const { PagesService } = require('../dist/pages/pages.service')
+
+async function main() {
+  const url = new URL(process.env.DATABASE_URL || '')
+  assert.ok(['127.0.0.1', 'localhost'].includes(url.hostname) && url.pathname.includes('test'), 'Use a local test database')
+  const db = new PrismaService(), pages = new PagesService(db), ids = []
+  assert.equal(await db.siteSetting.count({ where: { key: { in: ['header_settings', 'footer_settings'] } } }), 0, 'Use an empty disposable test database')
+  try {
+    const page = await pages.createPage({ slug: `site-block-${randomUUID()}`, title: { vi: 'Trang nguồn' }, is_published: true })
+    ids.push(page.id)
+    const header = await pages.createBlock({ page_id: page.id, block_type: 'heritage_showcase', content: { variant: 'header', title: { vi: 'Tên', en: 'Name' }, items: [{ href: '/vi/home' }] }, is_visible: true })
+    const footer = await pages.createBlock({ page_id: page.id, block_type: 'features_strip', content: { layoutVariant: 'travel-footer', brand: { vi: 'Di sản', en: 'Heritage' } }, is_visible: true })
+    const body = await pages.createBlock({ page_id: page.id, block_type: 'split', content: { title: { vi: 'Nội dung' } }, is_visible: true })
+    const candidates = await pages.getSiteBlockCandidates()
+    assert.ok(candidates.some(row => row.id === header.id && row.kind === 'header'))
+    assert.ok(candidates.some(row => row.id === footer.id && row.kind === 'footer'))
+    assert.ok(!candidates.some(row => row.id === body.id))
+    await db.siteSetting.createMany({ data: [{ key: 'header_settings', value: { blockId: header.id } }, { key: 'footer_settings', value: { blockId: footer.id } }] })
+    let selected = await pages.getSiteBlocks('en')
+    assert.equal(selected.header.content.title, 'Name')
+    assert.equal(selected.footer.content.brand, 'Heritage')
+    assert.deepEqual((await pages.getPublishedPageBlocks(page.slug, 'vi')).map(row => row.id), [body.id])
+    await pages.updateBlock(header.id, { content: { variant: 'header', title: { vi: 'Đã sửa', en: '' } } })
+    assert.equal((await pages.getSiteBlocks('en')).header.content.title, 'Đã sửa')
+    await pages.updateBlock(header.id, { is_visible: false })
+    assert.equal((await pages.getSiteBlocks('vi')).header, null)
+    assert.ok(!(await pages.getSiteBlockCandidates()).some(row => row.id === header.id))
+    await pages.updatePage(page.id, { is_published: false })
+    selected = await pages.getSiteBlocks('vi')
+    assert.equal(selected.footer.id, footer.id)
+    assert.ok((await pages.getSiteBlockCandidates()).some(row => row.id === footer.id && row.page_published === false))
+    assert.equal(await pages.getPublishedPageBlocks(page.slug), null)
+    await pages.deleteBlock(footer.id)
+    assert.equal((await pages.getSiteBlocks('vi')).footer, null)
+    console.log('Site block integration checks passed')
+  } finally {
+    await db.siteSetting.deleteMany({ where: { key: { in: ['header_settings', 'footer_settings'] } } })
+    await db.page.deleteMany({ where: { id: { in: ids } } })
+    await db.$disconnect()
+  }
+}
+main().catch(error => { console.error(error); process.exitCode = 1 })

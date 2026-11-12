@@ -7,6 +7,11 @@ import { PagesService } from './pages.service'
 export class PagesPublicController {
   constructor(private readonly pagesService: PagesService) {}
 
+  @Get('site-blocks')
+  getSiteBlocks(@Query('locale') locale?: string) {
+    return this.pagesService.getSiteBlocks(locale || 'vi')
+  }
+
   @Get('nav-pages')
   getNavPages() {
     return this.pagesService.getPublishedNavPages()
