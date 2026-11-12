@@ -202,6 +202,18 @@ export class TranslateService {
     if (!text.trim()) return text
     if (fromLang === toLang) return text
 
+    // Legacy titles use a literal "\n"; newer fields may contain real newlines.
+    // Keep these layout separators outside the provider so words cannot be joined.
+    const lines = text.split(/(\\n|\r\n|\r|\n)/)
+    if (lines.length > 1) {
+      const translated: string[] = []
+      for (const line of lines) {
+        translated.push(/^(\\n|\r\n|\r|\n)$/.test(line) || !line.trim()
+          ? line : await this.translateText(line, fromLang, toLang, engine))
+      }
+      return translated.join('')
+    }
+
     if (engine === 'gemini') {
       const fromName = LANGUAGE_NAMES[fromLang] || fromLang
       const toName = LANGUAGE_NAMES[toLang] || toLang
