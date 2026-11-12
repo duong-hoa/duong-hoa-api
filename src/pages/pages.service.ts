@@ -5,6 +5,7 @@ import type { ContentBlock, Page, PageCategory } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { compact } from '../common/compact.util'
 import { translateContent } from '../common/localize.util'
+import { siteBlockKind, type SiteBlockKind } from '../common/site-block.util'
 import { PageInputDto } from './dto/page-input.dto'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
@@ -100,6 +101,33 @@ function blockInputToPrisma(input: BlockInputDto) {
 @Injectable()
 export class PagesService {
   constructor(private readonly prisma: PrismaService) {}
+
+  async getSiteBlockCandidates() {
+    const blocks = await this.prisma.contentBlock.findMany({
+      where: { isVisible: true, page: { isTemplate: false } },
+      include: { page: { select: { slug: true, title: true, isPublished: true } } },
+      orderBy: [{ page: { sortOrder: 'asc' } }, { sortOrder: 'asc' }],
+    })
+    return blocks.flatMap(block => {
+      const kind = siteBlockKind(block.blockType, block.content)
+      return kind ? [{ id: block.id, kind, label: block.label, block_type: block.blockType, page_slug: block.page.slug, page_title: block.page.title, page_published: block.page.isPublished }] : []
+    })
+  }
+
+  async getSiteBlocks(locale: string) {
+    const settings = await this.prisma.siteSetting.findMany({ where: { key: { in: ['header_settings', 'footer_settings'] } } })
+    const result: Record<SiteBlockKind, ReturnType<typeof toBlockRow> | null> = { header: null, footer: null }
+    for (const kind of ['header', 'footer'] as const) {
+      const value = settings.find(row => row.key === `${kind}_settings`)?.value
+      const id = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>).blockId : null
+      if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) continue
+      // Selecting a specific block in site settings publishes that block alone,
+      // even if its source page is a draft. Other draft blocks stay private.
+      const block = await this.prisma.contentBlock.findFirst({ where: { id, isVisible: true, page: { isTemplate: false } } })
+      if (block && siteBlockKind(block.blockType, block.content) === kind) result[kind] = { ...toBlockRow(block), content: translateContent(block.content, locale) }
+    }
+    return result
+  }
 
   // ── Admin ────────────────────────────────────────────────────────────
 
@@ -366,7 +394,11 @@ export class PagesService {
     })
     if (!blocks.length) return null
 
-    return blocks.map((block) => ({
+    const siteBlocks = await this.getSiteBlocks(locale)
+    return blocks.filter(block => {
+      const kind = siteBlockKind(block.blockType, block.content)
+      return !kind || !siteBlocks[kind]
+    }).map((block) => ({
       ...toBlockRow(block),
       content: translateContent(block.content, locale),
       audio_url: page.audioUrl,

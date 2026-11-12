@@ -98,6 +98,9 @@ export class PageCategoriesAdminController {
 export class BlocksAdminController {
   constructor(private readonly pagesService: PagesService) {}
 
+  @Get('site-candidates')
+  siteCandidates() { return this.pagesService.getSiteBlockCandidates() }
+
   @Post()
   createBlock(@Body() input: BlockInputDto) {
     return this.pagesService.createBlock(input)
