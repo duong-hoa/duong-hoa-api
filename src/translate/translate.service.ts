@@ -25,14 +25,24 @@ const GOOGLE_LANG_MAP: Record<string, string> = {
 // Keys that should never be translated (config/layout/media fields).
 const NON_TRANSLATABLE_KEYS = new Set([
   'theme', 'imagePosition', 'mediaType', 'chapterNumber', 'id',
-  'parallax', 'bodyColumns', 'miniCardsLayout', 'columns', 'cardStyle',
+  'parallax', 'bodyColumns', 'miniCardsLayout', 'cardStyle',
   'contentAlign', 'src', 'href', 'variant', 'is3d', 'fancyboxGroup',
   'sort_order', 'is_visible', 'block_type', 'page_id',
-  'images', 'galleryBelow', 'youtubeId', 'ornamentPosition', 'prefix',
+  'youtubeId', 'ornamentPosition',
   'iconKey', 'number', 'priceVnd',
 ])
 
 const URL_KEYS = new Set(['src', 'href', 'image', 'cover_image', 'seo_image'])
+
+// Older CMS records and newly added list items may still contain plain strings.
+// Translate only known text fields; identifiers, image URLs and settings remain untouched.
+const TRANSLATABLE_TEXT_KEYS = new Set([
+  'title', 'subtitle', 'eyebrow', 'description', 'body', 'bodyText', 'text',
+  'label', 'caption', 'alt', 'imageAlt', 'location', 'address', 'hours', 'prefix',
+  'brand', 'owner', 'contactTitle', 'bottomNote', 'copyright', 'secondary',
+  'primaryLabel', 'secondaryLabel', 'languageOne', 'languageTwo', 'note', 'ariaLabel',
+])
+const TRANSLATABLE_TEXT_ARRAY_KEYS = new Set(['body', 'tags', 'items'])
 
 // Only matches the scalar-text localized shape ({ vi: 'text', en: 'text' }),
 // not the array-of-per-locale-arrays shape ({ vi: ['a','b'], en: [] }) used
@@ -162,6 +172,7 @@ export class TranslateService {
         })
 
         if (res.status === 429) {
+          if (attempt === retries - 1) throw new HttpException('Dịch vụ dịch đang quá tải. Vui lòng thử lại sau.', HttpStatus.TOO_MANY_REQUESTS)
           await new Promise((r) => setTimeout(r, delay))
           delay *= 2
           continue
@@ -170,17 +181,21 @@ export class TranslateService {
         if (!res.ok) throw new Error(`HTTP ${res.status}`)
 
         const data = await res.json()
-        return (data[0] as Array<[string]>).map((seg) => seg[0]).join('')
+        if (!Array.isArray(data?.[0])) throw new Error('Invalid translation response')
+        const translated = (data[0] as Array<[string]>).map((seg) => seg[0]).join('')
+        if (!translated.trim()) throw new Error('Empty translation response')
+        return translated
       } catch (err) {
         if (attempt === retries - 1) {
           console.error(`Google Translation error after retries (${fromLang} → ${toLang}):`, err)
-          return text
+          if (err instanceof HttpException) throw err
+          throw new HttpException('Không thể kết nối dịch vụ dịch tự động. Vui lòng thử lại.', HttpStatus.SERVICE_UNAVAILABLE)
         }
         await new Promise((r) => setTimeout(r, delay))
         delay *= 1.5
       }
     }
-    return text
+    throw new HttpException('Không thể kết nối dịch vụ dịch tự động. Vui lòng thử lại.', HttpStatus.SERVICE_UNAVAILABLE)
   }
 
   async translateText(text: string, fromLang: string, toLang: string, engine: 'google' | 'gemini' = 'gemini'): Promise<string> {
@@ -273,6 +288,17 @@ Output ONLY the raw translated HTML.`
 
       const val = result[key]
 
+      if (typeof val === 'string' && TRANSLATABLE_TEXT_KEYS.has(key) && val.trim()) {
+        const fn = isHtmlText(val) ? this.translateHTML.bind(this) : this.translateText.bind(this)
+        const translated: Record<string, string> = { [fromLang]: val }
+        for (const lang of targets) {
+          translated[lang] = await fn(val, fromLang, lang, engine)
+          await new Promise((r) => setTimeout(r, engine === 'gemini' ? 150 : 250))
+        }
+        result[key] = translated
+        continue
+      }
+
       if (isLocalizedObject(val)) {
         const sourceText = (val[fromLang] as string) || ''
         if (!sourceText.trim()) continue
@@ -294,7 +320,15 @@ Output ONLY the raw translated HTML.`
         for (let i = 0; i < newArr.length; i++) {
           const item = newArr[i]
 
-          if (isLocalizedObject(item)) {
+          if (typeof item === 'string' && item.trim() && TRANSLATABLE_TEXT_ARRAY_KEYS.has(key)) {
+            const fn = isHtmlText(item) ? this.translateHTML.bind(this) : this.translateText.bind(this)
+            const translated: Record<string, string> = { [fromLang]: item }
+            for (const lang of targets) {
+              translated[lang] = await fn(item, fromLang, lang, engine)
+              await new Promise((r) => setTimeout(r, engine === 'gemini' ? 150 : 250))
+            }
+            newArr[i] = translated
+          } else if (isLocalizedObject(item)) {
             const sourceText = (item as Record<string, string>)[fromLang] || ''
             if (!sourceText.trim()) continue
 
@@ -308,7 +342,19 @@ Output ONLY the raw translated HTML.`
             }
             newArr[i] = translated
           } else if (item && typeof item === 'object' && !Array.isArray(item)) {
-            newArr[i] = await this.translateContentObject(item as Record<string, unknown>, fromLang, engine)
+            let entry = item as Record<string, unknown>
+            // These variants use category as a visible group name. Other variants
+            // use it as a stable identifier (e.g. blog/header) and must keep it.
+            if (key === 'items' && ['exhibition', 'columns', 'footer'].includes(String(result.variant))) {
+              const category = entry.category
+              const source = typeof category === 'string' ? category : isLocalizedObject(category) ? category[fromLang] : ''
+              if (source) entry = {
+                ...entry,
+                category: typeof category === 'string' ? { [fromLang]: category } : category,
+                ...(result.variant === 'footer' && source === 'THỐNG KÊ TRUY CẬP' ? { groupCode: 'stats' } : {}),
+              }
+            }
+            newArr[i] = await this.translateContentObject(entry, fromLang, engine)
           }
         }
         result[key] = newArr
