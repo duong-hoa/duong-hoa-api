@@ -40,6 +40,12 @@ async function main() {
     assert.equal(out.bgImage, '/uploads/nen.jpg')
     assert.equal(out.layoutChoice, 'alternate')
     assert.equal(input.items[0].category, 'THỐNG KÊ TRUY CẬP')
+    const lineService = new TranslateService({ get: () => undefined })
+    const fragments = []
+    lineService.callGemini = async text => { fragments.push(text); return 'en:' + text }
+    assert.equal(await lineService.translateText('Khám phá\\nDương Hòa', 'vi', 'en'), 'en:Khám phá\\nen:Dương Hòa')
+    assert.equal(await lineService.translateText('Di sản\r\n\r\nCộng đồng', 'vi', 'en'), 'en:Di sản\r\n\r\nen:Cộng đồng')
+    assert.deepEqual(fragments, ['Khám phá', 'Dương Hòa', 'Di sản', 'Cộng đồng'])
     const failingService = new TranslateService({ get: () => undefined })
     const originalFetch = global.fetch
     const originalError = console.error
