@@ -54,6 +54,30 @@ model PageTemplateCollection {
   @@map("page_template_collections")
 }
 
+model BlockLayoutCollection {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  layouts BlockLayoutCollectionAssignment[]
+
+  @@map("block_layout_collections")
+}
+
+model BlockLayoutCollectionAssignment {
+  scope        String   @id
+  blockType    String   @map("block_type")
+  collectionId String   @map("collection_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt    DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  collection BlockLayoutCollection @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+
+  @@index([collectionId])
+  @@map("block_layout_collection_assignments")
+}
+
 // Groups pages for the public header's nav — pages sharing a category
 // collapse into one dropdown there (see Header.tsx). Deliberately has no
 // slug: unlike PostCategory, this isn't a browsable taxonomy route, purely

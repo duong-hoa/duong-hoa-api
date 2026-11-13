@@ -4,7 +4,7 @@ import { PagesService } from './pages.service'
 import { PageInputDto } from './dto/page-input.dto'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
-import { CreatePageTemplateDto, PageTemplateCollectionNameDto, RenamePageTemplateDto, UpdatePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
+import { AssignBlockLayoutCollectionDto, BlockLayoutCollectionNameDto, CreatePageTemplateDto, PageTemplateCollectionNameDto, RenamePageTemplateDto, UpdatePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
 
 // Mirrors the page/block admin server actions in src/lib/admin-actions.ts.
 @UseGuards(JwtAuthGuard)
@@ -83,6 +83,27 @@ export class PageTemplateCollectionsAdminController {
 
   @Delete(':id')
   remove(@Param('id') id: string) { return this.pagesService.deletePageTemplateCollection(id) }
+}
+
+@UseGuards(JwtAuthGuard)
+@Controller('admin/block-layout-collections')
+export class BlockLayoutCollectionsAdminController {
+  constructor(private readonly pagesService: PagesService) {}
+
+  @Get()
+  list() { return this.pagesService.getBlockLayoutCollections() }
+
+  @Post()
+  create(@Body() input: BlockLayoutCollectionNameDto) { return this.pagesService.createBlockLayoutCollection(input) }
+
+  @Patch('assignment')
+  assign(@Body() input: AssignBlockLayoutCollectionDto) { return this.pagesService.assignBlockLayoutCollection(input) }
+
+  @Patch(':id')
+  rename(@Param('id') id: string, @Body() input: BlockLayoutCollectionNameDto) { return this.pagesService.renameBlockLayoutCollection(id, input) }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) { return this.pagesService.deleteBlockLayoutCollection(id) }
 }
 
 @UseGuards(JwtAuthGuard)

@@ -9,7 +9,7 @@ import { siteBlockKind, type SiteBlockKind } from '../common/site-block.util'
 import { PageInputDto } from './dto/page-input.dto'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
-import { CreatePageTemplateDto, PageTemplateCollectionNameDto, UpdatePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
+import { AssignBlockLayoutCollectionDto, BlockLayoutCollectionNameDto, CreatePageTemplateDto, PageTemplateCollectionNameDto, UpdatePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
 
 // Row shapes returned to callers match the original snake_case Postgres
 // columns from src/lib/repos/pages.ts exactly (not Prisma's camelCase model
@@ -250,6 +250,71 @@ export class PagesService {
     const collection = await this.prisma.pageTemplateCollection.findUnique({ where: { id }, select: { id: true } })
     if (!collection) throw new NotFoundException('Không tìm thấy bộ sưu tập mẫu trang')
     await this.prisma.pageTemplateCollection.delete({ where: { id } })
+    return { success: true }
+  }
+
+  async getBlockLayoutCollections() {
+    const [collections, layouts] = await Promise.all([
+      this.prisma.blockLayoutCollection.findMany({
+        include: { _count: { select: { layouts: true } } },
+        orderBy: { name: 'asc' },
+      }),
+      this.prisma.blockLayoutCollectionAssignment.findMany({ select: { scope: true, collectionId: true } }),
+    ])
+    return {
+      collections: collections.map(collection => ({
+        id: collection.id, name: collection.name, block_count: collection._count.layouts,
+        created_at: collection.createdAt, updated_at: collection.updatedAt,
+      })),
+      assignments: Object.fromEntries(layouts.map(layout => [layout.scope, layout.collectionId])),
+    }
+  }
+
+  async createBlockLayoutCollection(input: BlockLayoutCollectionNameDto) {
+    const name = input.name.trim()
+    if (!name) throw new BadRequestException('Vui lòng nhập tên bộ sưu tập block')
+    if (await this.prisma.blockLayoutCollection.findUnique({ where: { name }, select: { id: true } })) {
+      throw new BadRequestException('Tên bộ sưu tập block đã tồn tại')
+    }
+    const collection = await this.prisma.blockLayoutCollection.create({ data: { name } })
+    return { id: collection.id, name: collection.name, block_count: 0, created_at: collection.createdAt, updated_at: collection.updatedAt }
+  }
+
+  async renameBlockLayoutCollection(id: string, input: BlockLayoutCollectionNameDto) {
+    const name = input.name.trim()
+    if (!name) throw new BadRequestException('Vui lòng nhập tên bộ sưu tập block')
+    const exists = await this.prisma.blockLayoutCollection.findUnique({ where: { id }, select: { id: true } })
+    if (!exists) throw new NotFoundException('Không tìm thấy bộ sưu tập block')
+    if (await this.prisma.blockLayoutCollection.findFirst({ where: { name, id: { not: id } }, select: { id: true } })) {
+      throw new BadRequestException('Tên bộ sưu tập block đã tồn tại')
+    }
+    const collection = await this.prisma.blockLayoutCollection.update({ where: { id }, data: { name } })
+    const block_count = await this.prisma.blockLayoutCollectionAssignment.count({ where: { collectionId: id } })
+    return { id: collection.id, name: collection.name, block_count, created_at: collection.createdAt, updated_at: collection.updatedAt }
+  }
+
+  async deleteBlockLayoutCollection(id: string) {
+    const collection = await this.prisma.blockLayoutCollection.findUnique({ where: { id }, select: { id: true } })
+    if (!collection) throw new NotFoundException('Không tìm thấy bộ sưu tập block')
+    const unassigned_count = await this.prisma.blockLayoutCollectionAssignment.count({ where: { collectionId: id } })
+    await this.prisma.blockLayoutCollection.delete({ where: { id } })
+    return { success: true, unassigned_count }
+  }
+
+  async assignBlockLayoutCollection(input: AssignBlockLayoutCollectionDto) {
+    const scope = input.scope.trim(), blockType = input.block_type.trim()
+    if (!scope || !blockType) throw new BadRequestException('Mẫu block không hợp lệ')
+    if (input.collection_id) {
+      const collection = await this.prisma.blockLayoutCollection.findUnique({ where: { id: input.collection_id }, select: { id: true } })
+      if (!collection) throw new NotFoundException('Không tìm thấy bộ sưu tập block')
+      await this.prisma.blockLayoutCollectionAssignment.upsert({
+        where: { scope },
+        create: { scope, blockType, collectionId: collection.id },
+        update: { blockType, collectionId: collection.id },
+      })
+    } else {
+      await this.prisma.blockLayoutCollectionAssignment.deleteMany({ where: { scope } })
+    }
     return { success: true }
   }
 

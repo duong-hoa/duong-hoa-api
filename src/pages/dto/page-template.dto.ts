@@ -46,6 +46,26 @@ export class PageTemplateCollectionNameDto {
   name!: string
 }
 
+export class BlockLayoutCollectionNameDto {
+  @IsString()
+  @Length(1, 150)
+  name!: string
+}
+
+export class AssignBlockLayoutCollectionDto {
+  @IsString()
+  @Length(1, 300)
+  scope!: string
+
+  @IsString()
+  @Length(1, 100)
+  block_type!: string
+
+  @IsOptional()
+  @IsUUID()
+  collection_id?: string | null
+}
+
 export class UsePageTemplateDto {
   @IsString()
   @Length(1, 150)
