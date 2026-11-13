@@ -1,6 +1,6 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, UseGuards } from '@nestjs/common'
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common'
 import { JwtAuthGuard } from '../auth/jwt-auth.guard'
-import { ActivatePresetDto, CreatePageFromPresetDto, CreatePresetDto, ResetPresetSelectionDto } from './presets.dto'
+import { ActivatePresetDto, AssignPresetGroupDto, CreatePageFromPresetDto, CreatePresetDto, CreatePresetGroupDto, RenamePresetGroupDto, ResetPresetSelectionDto } from './presets.dto'
 import { PresetsService } from './presets.service'
 
 @UseGuards(JwtAuthGuard)
@@ -12,6 +12,21 @@ export class PresetsController {
   list(@Query('kind') kind?: string, @Query('scope') scope?: string) {
     return this.presets.list(kind, scope)
   }
+
+  @Get('groups')
+  listGroups(@Query('kind') kind?: string) { return this.presets.listGroups(kind) }
+
+  @Post('groups')
+  createGroup(@Body() input: CreatePresetGroupDto) { return this.presets.createGroup(input) }
+
+  @Patch('groups/:id')
+  renameGroup(@Param('id') id: string, @Body() input: RenamePresetGroupDto) { return this.presets.renameGroup(id, input) }
+
+  @Delete('groups/:id')
+  deleteGroup(@Param('id') id: string) { return this.presets.deleteGroup(id) }
+
+  @Patch(':id/group')
+  assignGroup(@Param('id') id: string, @Body() input: AssignPresetGroupDto) { return this.presets.assignGroup(id, input) }
 
   @Get('pages/:pageId/state')
   pageState(@Param('pageId') pageId: string) { return this.presets.pageState(pageId) }

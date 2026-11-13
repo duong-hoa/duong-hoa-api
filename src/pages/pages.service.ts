@@ -9,7 +9,7 @@ import { siteBlockKind, type SiteBlockKind } from '../common/site-block.util'
 import { PageInputDto } from './dto/page-input.dto'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
-import { CreatePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
+import { CreatePageTemplateDto, PageTemplateCollectionNameDto, UpdatePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
 
 // Row shapes returned to callers match the original snake_case Postgres
 // columns from src/lib/repos/pages.ts exactly (not Prisma's camelCase model
@@ -26,6 +26,7 @@ function toPageRow(page: Page) {
     is_published: page.isPublished,
     is_template: page.isTemplate,
     template_name: page.templateName,
+    template_collection_id: page.templateCollectionId,
     sort_order: page.sortOrder,
     sub_nav: page.subNav,
     category_id: page.categoryId,
@@ -217,11 +218,50 @@ export class PagesService {
     return templates.map((template) => ({ ...toPageRow(template), block_count: template._count.blocks }))
   }
 
+  async getPageTemplateCollections() {
+    const collections = await this.prisma.pageTemplateCollection.findMany({ orderBy: [{ name: 'asc' }] })
+    return Promise.all(collections.map(async collection => ({
+      id: collection.id, name: collection.name,
+      template_count: await this.prisma.page.count({ where: { isTemplate: true, templateCollectionId: collection.id } }),
+      created_at: collection.createdAt, updated_at: collection.updatedAt,
+    })))
+  }
+
+  async createPageTemplateCollection(input: PageTemplateCollectionNameDto) {
+    const name = input.name.trim()
+    if (!name) throw new BadRequestException('Vui lòng nhập tên bộ sưu tập')
+    if (await this.prisma.pageTemplateCollection.findUnique({ where: { name }, select: { id: true } })) throw new BadRequestException('Tên bộ sưu tập đã tồn tại')
+    const collection = await this.prisma.pageTemplateCollection.create({ data: { name } })
+    return { id: collection.id, name: collection.name, template_count: 0, created_at: collection.createdAt, updated_at: collection.updatedAt }
+  }
+
+  async renamePageTemplateCollection(id: string, input: PageTemplateCollectionNameDto) {
+    const name = input.name.trim()
+    if (!name) throw new BadRequestException('Vui lòng nhập tên bộ sưu tập')
+    const exists = await this.prisma.pageTemplateCollection.findUnique({ where: { id }, select: { id: true } })
+    if (!exists) throw new NotFoundException('Không tìm thấy bộ sưu tập mẫu trang')
+    if (await this.prisma.pageTemplateCollection.findFirst({ where: { name, id: { not: id } }, select: { id: true } })) throw new BadRequestException('Tên bộ sưu tập đã tồn tại')
+    const collection = await this.prisma.pageTemplateCollection.update({ where: { id }, data: { name } })
+    const template_count = await this.prisma.page.count({ where: { isTemplate: true, templateCollectionId: id } })
+    return { id: collection.id, name: collection.name, template_count, created_at: collection.createdAt, updated_at: collection.updatedAt }
+  }
+
+  async deletePageTemplateCollection(id: string) {
+    const collection = await this.prisma.pageTemplateCollection.findUnique({ where: { id }, select: { id: true } })
+    if (!collection) throw new NotFoundException('Không tìm thấy bộ sưu tập mẫu trang')
+    await this.prisma.pageTemplateCollection.delete({ where: { id } })
+    return { success: true }
+  }
+
   async createPageTemplate(input: CreatePageTemplateDto) {
     const name = input.name.trim()
     if (!name) throw new BadRequestException('Vui lòng nhập tên mẫu trang')
     if (input.source_page_id && input.blocks?.length) throw new BadRequestException('Chọn trang nguồn hoặc bộ block ban đầu')
     return this.prisma.$transaction(async (tx) => {
+      const templateCollectionId = input.collection_id ? await tx.pageTemplateCollection.findUnique({ where: { id: input.collection_id }, select: { id: true } }).then(collection => {
+        if (!collection) throw new BadRequestException('Không tìm thấy bộ sưu tập mẫu trang')
+        return collection.id
+      }) : null
       const source = input.source_page_id ? await tx.page.findUnique({ where: { id: input.source_page_id }, include: { blocks: { orderBy: { sortOrder: 'asc' } } } }) : null
       if (input.source_page_id && !source) throw new NotFoundException('Không tìm thấy trang nguồn')
       const created = await tx.page.create({ data: {
@@ -230,7 +270,7 @@ export class PagesService {
         ...(source ? { description: source.description === null ? Prisma.DbNull : source.description as Prisma.InputJsonValue } : {}),
         seoImage: source?.seoImage ?? null, audioUrl: source?.audioUrl ?? null,
         subNav: (source?.subNav ?? []) as Prisma.InputJsonValue, categoryId: source?.categoryId ?? null,
-        isPublished: false, isTemplate: true, templateName: name,
+        isPublished: false, isTemplate: true, templateName: name, templateCollectionId,
       } })
       if (source) {
         for (const block of source.blocks) await tx.contentBlock.create({ data: {
@@ -250,12 +290,27 @@ export class PagesService {
     })
   }
 
-  async renamePageTemplate(id: string, name: string) {
-    const trimmed = name.trim()
-    if (!trimmed) throw new BadRequestException('Vui lòng nhập tên mẫu trang')
+  async updatePageTemplate(id: string, input: UpdatePageTemplateDto) {
+    const trimmed = input.name?.trim()
+    if (input.name !== undefined && !trimmed) throw new BadRequestException('Vui lòng nhập tên mẫu trang')
+    if (input.name === undefined && input.collection_id === undefined) throw new BadRequestException('Không có thay đổi để lưu')
     const template = await this.prisma.page.findFirst({ where: { id, isTemplate: true } })
     if (!template) throw new NotFoundException('Không tìm thấy mẫu trang')
-    return toPageRow(await this.prisma.page.update({ where: { id }, data: { templateName: trimmed, updatedAt: new Date() } }))
+    const templateCollectionId = input.collection_id === undefined
+      ? template.templateCollectionId
+      : input.collection_id
+        ? await this.prisma.pageTemplateCollection.findUnique({ where: { id: input.collection_id }, select: { id: true } }).then(collection => {
+          if (!collection) throw new BadRequestException('Không tìm thấy bộ sưu tập mẫu trang')
+          return collection.id
+        })
+        : null
+    return toPageRow(await this.prisma.page.update({ where: { id }, data: {
+      ...(trimmed ? { templateName: trimmed } : {}), templateCollectionId, updatedAt: new Date(),
+    } }))
+  }
+
+  async renamePageTemplate(id: string, name: string) {
+    return this.updatePageTemplate(id, { name })
   }
 
   async deletePageTemplate(id: string) {
@@ -266,9 +321,9 @@ export class PagesService {
   }
 
   async clonePageTemplate(id: string, name: string) {
-    const template = await this.prisma.page.findFirst({ where: { id, isTemplate: true }, select: { id: true } })
+    const template = await this.prisma.page.findFirst({ where: { id, isTemplate: true }, select: { id: true, templateCollectionId: true } })
     if (!template) throw new NotFoundException('Không tìm thấy mẫu trang')
-    return this.createPageTemplate({ name, source_page_id: id })
+    return this.createPageTemplate({ name, source_page_id: id, collection_id: template.templateCollectionId })
   }
 
   async usePageTemplate(id: string, input: UsePageTemplateDto) {

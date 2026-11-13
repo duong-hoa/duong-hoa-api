@@ -12,6 +12,10 @@ export class CreatePageTemplateDto {
   source_page_id?: string
 
   @IsOptional()
+  @IsUUID()
+  collection_id?: string | null
+
+  @IsOptional()
   @IsArray()
   @ArrayMaxSize(100)
   @ValidateNested({ each: true })
@@ -20,6 +24,23 @@ export class CreatePageTemplateDto {
 }
 
 export class RenamePageTemplateDto {
+  @IsString()
+  @Length(1, 150)
+  name!: string
+}
+
+export class UpdatePageTemplateDto {
+  @IsOptional()
+  @IsString()
+  @Length(1, 150)
+  name?: string
+
+  @IsOptional()
+  @IsUUID()
+  collection_id?: string | null
+}
+
+export class PageTemplateCollectionNameDto {
   @IsString()
   @Length(1, 150)
   name!: string

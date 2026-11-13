@@ -16,28 +16,42 @@ datasource db {
 }
 
 model Page {
-  id          String   @id @default(uuid()) @db.Uuid
-  slug        String   @unique
-  title       Json     @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
-  description Json?    @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
-  seoImage    String?  @map("seo_image")
-  audioUrl    String?  @map("audio_url")
-  isPublished Boolean  @default(false) @map("is_published")
-  isTemplate  Boolean  @default(false) @map("is_template")
-  templateName String? @map("template_name")
-  sortOrder   Int      @default(0) @map("sort_order")
-  subNav      Json     @default("[]") @map("sub_nav")
-  categoryId  String?  @map("category_id") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt   DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  id                   String   @id @default(uuid()) @db.Uuid
+  slug                 String   @unique
+  title                Json     @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  description          Json?    @default("{\"vi\": \"\", \"en\": \"\", \"ru\": \"\", \"zh\": \"\"}")
+  seoImage             String?  @map("seo_image")
+  audioUrl             String?  @map("audio_url")
+  isPublished          Boolean  @default(false) @map("is_published")
+  isTemplate           Boolean  @default(false) @map("is_template")
+  templateName         String?  @map("template_name")
+  sortOrder            Int      @default(0) @map("sort_order")
+  subNav               Json     @default("[]") @map("sub_nav")
+  categoryId           String?  @map("category_id") @db.Uuid
+  templateCollectionId String?  @map("template_collection_id") @db.Uuid
+  createdAt            DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt            DateTime @default(now()) @map("updated_at") @db.Timestamptz
 
-  blocks        ContentBlock[]
-  mapLocations  MapLocation[]
-  category      PageCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  presetBaseline CmsPresetPageBaseline?
+  blocks             ContentBlock[]
+  mapLocations       MapLocation[]
+  category           PageCategory?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  templateCollection PageTemplateCollection? @relation(fields: [templateCollectionId], references: [id], onDelete: SetNull)
+  presetBaseline     CmsPresetPageBaseline?
 
-  @@map("pages")
   @@index([isTemplate, updatedAt])
+  @@index([templateCollectionId, isTemplate])
+  @@map("pages")
+}
+
+model PageTemplateCollection {
+  id        String   @id @default(uuid()) @db.Uuid
+  name      String   @unique
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  pages Page[]
+
+  @@map("page_template_collections")
 }
 
 // Groups pages for the public header's nav — pages sharing a category
@@ -57,15 +71,15 @@ model PageCategory {
 }
 
 model ContentBlock {
-  id         String   @id @default(uuid()) @db.Uuid
-  pageId     String   @map("page_id") @db.Uuid
-  blockType  String   @map("block_type")
-  sortOrder  Int      @default(0) @map("sort_order")
-  content    Json     @default("{}")
-  isVisible  Boolean  @default(true) @map("is_visible")
-  label      String?
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt  DateTime @default(now()) @map("updated_at") @db.Timestamptz
+  id        String   @id @default(uuid()) @db.Uuid
+  pageId    String   @map("page_id") @db.Uuid
+  blockType String   @map("block_type")
+  sortOrder Int      @default(0) @map("sort_order")
+  content   Json     @default("{}")
+  isVisible Boolean  @default(true) @map("is_visible")
+  label     String?
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
 
   page Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
@@ -89,7 +103,7 @@ model MapLocation {
   updatedAt     DateTime @default(now()) @map("updated_at") @db.Timestamptz
 
   category LocationCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
-  page     Page?              @relation(fields: [pageId], references: [id], onDelete: SetNull)
+  page     Page?             @relation(fields: [pageId], references: [id], onDelete: SetNull)
 
   @@index([isPublished, sortOrder])
   @@map("map_locations")
@@ -132,32 +146,49 @@ model SiteSetting {
 
 // Named editor snapshots are private to the CMS and never exposed by public APIs.
 model CmsPreset {
-  id         String   @id @default(uuid()) @db.Uuid
+  id         String               @id @default(uuid()) @db.Uuid
   kind       String
   scope      String
   name       String
+  groupId    String?              @map("group_id") @db.Uuid
   payload    Json
-  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
-  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  createdAt  DateTime             @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime             @updatedAt @map("updated_at") @db.Timestamptz
   selections CmsPresetSelection[]
+  group      CmsPresetGroup?      @relation(fields: [groupId], references: [id], onDelete: SetNull)
 
   @@index([kind, scope, createdAt])
+  @@index([groupId])
   @@map("cms_presets")
 }
 
+model CmsPresetGroup {
+  id        String   @id @default(uuid()) @db.Uuid
+  kind      String
+  name      String
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt DateTime @updatedAt @map("updated_at") @db.Timestamptz
+
+  presets CmsPreset[]
+
+  @@unique([kind, name])
+  @@index([kind, createdAt])
+  @@map("cms_preset_groups")
+}
+
 model CmsPresetSelection {
-  key      String @id
-  presetId String @map("preset_id") @db.Uuid
+  key      String    @id
+  presetId String    @map("preset_id") @db.Uuid
   preset   CmsPreset @relation(fields: [presetId], references: [id], onDelete: Cascade)
 
   @@map("cms_preset_selections")
 }
 
 model CmsPresetPageBaseline {
-  pageId      String @id @map("page_id") @db.Uuid
+  pageId      String  @id @map("page_id") @db.Uuid
   snapshot    Json
   sourceScope String? @map("source_scope")
-  page        Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+  page        Page    @relation(fields: [pageId], references: [id], onDelete: Cascade)
 
   @@map("cms_preset_page_baselines")
 }

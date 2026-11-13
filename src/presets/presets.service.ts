@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { randomUUID } from 'node:crypto'
 import { Prisma, type ContentBlock, type Page } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
-import { CreatePageFromPresetDto, CreatePresetDto, ResetPresetSelectionDto } from './presets.dto'
+import { AssignPresetGroupDto, CreatePageFromPresetDto, CreatePresetDto, CreatePresetGroupDto, RenamePresetGroupDto, ResetPresetSelectionDto } from './presets.dto'
 
 type PageSnapshot = {
   page: {
@@ -107,14 +107,65 @@ export class PresetsService {
     if (kind && kind !== 'block' && kind !== 'page') throw new BadRequestException('Loại preset không hợp lệ')
     const presets = await this.prisma.cmsPreset.findMany({
       where: { ...(kind ? { kind } : {}), ...(scope ? { scope } : {}) },
-      include: { selections: true }, orderBy: { createdAt: 'desc' },
+      include: { selections: true, group: { select: { name: true } } }, orderBy: { createdAt: 'desc' },
     })
     return presets.map(preset => ({
       id: preset.id, kind: preset.kind, scope: preset.scope, name: preset.name, payload: preset.payload,
+      group_id: preset.groupId, group_name: preset.group?.name ?? null,
       created_at: preset.createdAt, updated_at: preset.updatedAt,
       active: preset.selections.some(selection => selection.key === `${preset.kind}:${preset.scope}`),
       default_for_new_pages: preset.selections.some(selection => selection.key === 'page:new'),
     }))
+  }
+
+  async listGroups(kind?: string) {
+    if (kind && kind !== 'block' && kind !== 'page') throw new BadRequestException('Loại preset không hợp lệ')
+    const groups = await this.prisma.cmsPresetGroup.findMany({
+      where: kind ? { kind } : {}, include: { _count: { select: { presets: true } } },
+      orderBy: [{ kind: 'asc' }, { name: 'asc' }],
+    })
+    return groups.map(group => ({ id: group.id, kind: group.kind, name: group.name, preset_count: group._count.presets, created_at: group.createdAt, updated_at: group.updatedAt }))
+  }
+
+  async createGroup(input: CreatePresetGroupDto) {
+    const name = input.name.trim()
+    if (!name) throw new BadRequestException('Vui lòng nhập tên nhóm preset')
+    if (await this.prisma.cmsPresetGroup.findFirst({ where: { kind: input.kind, name }, select: { id: true } })) {
+      throw new BadRequestException('Tên nhóm preset đã tồn tại')
+    }
+    const group = await this.prisma.cmsPresetGroup.create({ data: { kind: input.kind, name } })
+    return { id: group.id, kind: group.kind, name: group.name, preset_count: 0, created_at: group.createdAt, updated_at: group.updatedAt }
+  }
+
+  async renameGroup(id: string, input: RenamePresetGroupDto) {
+    const name = input.name.trim()
+    if (!name) throw new BadRequestException('Vui lòng nhập tên nhóm preset')
+    const group = await this.prisma.cmsPresetGroup.findUnique({ where: { id } })
+    if (!group) throw new NotFoundException('Không tìm thấy nhóm preset')
+    if (await this.prisma.cmsPresetGroup.findFirst({ where: { kind: group.kind, name, id: { not: id } }, select: { id: true } })) {
+      throw new BadRequestException('Tên nhóm preset đã tồn tại')
+    }
+    const updated = await this.prisma.cmsPresetGroup.update({ where: { id }, data: { name } })
+    return { id: updated.id, kind: updated.kind, name: updated.name, preset_count: await this.prisma.cmsPreset.count({ where: { groupId: id } }), created_at: updated.createdAt, updated_at: updated.updatedAt }
+  }
+
+  async deleteGroup(id: string) {
+    const group = await this.prisma.cmsPresetGroup.findUnique({ where: { id }, select: { id: true } })
+    if (!group) throw new NotFoundException('Không tìm thấy nhóm preset')
+    const count = await this.prisma.cmsPreset.count({ where: { groupId: id } })
+    await this.prisma.cmsPresetGroup.delete({ where: { id } })
+    return { success: true, ungrouped_count: count }
+  }
+
+  async assignGroup(id: string, input: AssignPresetGroupDto) {
+    const preset = await this.prisma.cmsPreset.findUnique({ where: { id }, select: { id: true, kind: true } })
+    if (!preset) throw new NotFoundException('Không tìm thấy preset')
+    if (input.group_id) {
+      const group = await this.prisma.cmsPresetGroup.findUnique({ where: { id: input.group_id }, select: { id: true, kind: true } })
+      if (!group || group.kind !== preset.kind) throw new BadRequestException('Nhóm preset không phù hợp với loại preset này')
+    }
+    await this.prisma.cmsPreset.update({ where: { id }, data: { groupId: input.group_id ?? null } })
+    return { success: true }
   }
 
   async create(input: CreatePresetDto) {
@@ -132,7 +183,11 @@ export class PresetsService {
       payload = input.payload
     }
     if (JSON.stringify(payload).length > 5_000_000) throw new BadRequestException('Preset vượt quá kích thước cho phép')
-    const preset = await this.prisma.cmsPreset.create({ data: { kind: input.kind, scope, name, payload: json(payload) } })
+    if (input.group_id) {
+      const group = await this.prisma.cmsPresetGroup.findUnique({ where: { id: input.group_id }, select: { kind: true } })
+      if (!group || group.kind !== input.kind) throw new BadRequestException('Nhóm preset không phù hợp với loại preset này')
+    }
+    const preset = await this.prisma.cmsPreset.create({ data: { kind: input.kind, scope, name, groupId: input.group_id ?? null, payload: json(payload) } })
     return { id: preset.id }
   }
 

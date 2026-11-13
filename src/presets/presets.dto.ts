@@ -18,12 +18,37 @@ export class CreatePresetDto {
 
   @IsOptional()
   @IsUUID()
+  group_id?: string | null
+
+  @IsOptional()
+  @IsUUID()
   source_page_id?: string
 }
 
 export class ActivatePresetDto {
   @IsIn(['scope', 'new-pages', 'both'])
   target!: 'scope' | 'new-pages' | 'both'
+}
+
+export class CreatePresetGroupDto {
+  @IsIn(['block', 'page'])
+  kind!: 'block' | 'page'
+
+  @IsString()
+  @Length(1, 150)
+  name!: string
+}
+
+export class RenamePresetGroupDto {
+  @IsString()
+  @Length(1, 150)
+  name!: string
+}
+
+export class AssignPresetGroupDto {
+  @IsOptional()
+  @IsUUID()
+  group_id?: string | null
 }
 
 export class ResetPresetSelectionDto {

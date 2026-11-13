@@ -4,7 +4,7 @@ import { PagesService } from './pages.service'
 import { PageInputDto } from './dto/page-input.dto'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
-import { CreatePageTemplateDto, RenamePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
+import { CreatePageTemplateDto, PageTemplateCollectionNameDto, RenamePageTemplateDto, UpdatePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
 
 // Mirrors the page/block admin server actions in src/lib/admin-actions.ts.
 @UseGuards(JwtAuthGuard)
@@ -55,7 +55,7 @@ export class PageTemplatesAdminController {
   create(@Body() input: CreatePageTemplateDto) { return this.pagesService.createPageTemplate(input) }
 
   @Patch(':id')
-  rename(@Param('id') id: string, @Body() input: RenamePageTemplateDto) { return this.pagesService.renamePageTemplate(id, input.name) }
+  update(@Param('id') id: string, @Body() input: UpdatePageTemplateDto) { return this.pagesService.updatePageTemplate(id, input) }
 
   @Delete(':id')
   remove(@Param('id') id: string) { return this.pagesService.deletePageTemplate(id) }
@@ -65,6 +65,24 @@ export class PageTemplatesAdminController {
 
   @Post(':id/use')
   use(@Param('id') id: string, @Body() input: UsePageTemplateDto) { return this.pagesService.usePageTemplate(id, input) }
+}
+
+@UseGuards(JwtAuthGuard)
+@Controller('admin/page-template-collections')
+export class PageTemplateCollectionsAdminController {
+  constructor(private readonly pagesService: PagesService) {}
+
+  @Get()
+  list() { return this.pagesService.getPageTemplateCollections() }
+
+  @Post()
+  create(@Body() input: PageTemplateCollectionNameDto) { return this.pagesService.createPageTemplateCollection(input) }
+
+  @Patch(':id')
+  rename(@Param('id') id: string, @Body() input: PageTemplateCollectionNameDto) { return this.pagesService.renamePageTemplateCollection(id, input) }
+
+  @Delete(':id')
+  remove(@Param('id') id: string) { return this.pagesService.deletePageTemplateCollection(id) }
 }
 
 @UseGuards(JwtAuthGuard)
