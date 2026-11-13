@@ -35,7 +35,7 @@ export class StorageController {
 
     try {
       const key = sanitizeObjectKey(requestedPath)
-      await this.storageService.uploadObject({ key, body: file.buffer })
+      await this.storageService.uploadObject({ key, body: file.buffer, contentType: file.mimetype })
       // `path` is the full public URL — stored as-is in ContentBlock/settings
       // content going forward, so nothing needs to resolve it again at
       // display time. `key` is still the raw object key, kept for callers

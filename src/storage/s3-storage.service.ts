@@ -27,12 +27,19 @@ export class S3StorageService {
     })
   }
 
-  async uploadObject(input: { key: string; body: Buffer }) {
+  async uploadObject(input: { key: string; body: Buffer; contentType?: string }) {
     if (!this.bucket) {
       throw new Error('S3_NOT_CONFIGURED: S3_BUCKET environment variable is missing on backend')
     }
+    const suppliedType = (input.contentType || '').split(';')[0].trim().toLowerCase()
+    const contentType = /^(image|audio|video)\/[a-z0-9.+-]+$/.test(suppliedType) || suppliedType === 'application/pdf'
+      ? suppliedType : 'application/octet-stream'
     await this.client.send(
-      new PutObjectCommand({ Bucket: this.bucket, Key: input.key, Body: input.body }),
+      new PutObjectCommand({
+        Bucket: this.bucket, Key: input.key, Body: input.body, ContentType: contentType,
+        // Embedded SVG images render normally; direct navigation downloads the file.
+        ContentDisposition: contentType === 'image/svg+xml' ? 'attachment' : undefined,
+      }),
     )
     return input.key
   }
