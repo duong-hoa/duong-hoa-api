@@ -4,7 +4,7 @@ export type SiteBlockKind = 'header' | 'footer'
 export function siteBlockKind(type: string, content: unknown): SiteBlockKind | null {
   if (!content || typeof content !== 'object' || Array.isArray(content)) return null
   const c = content as Record<string, unknown>
-  if ((type === 'heritage_showcase' || type === 'hillbrook') && (c.variant === 'header' || c.variant === 'footer')) return c.variant
+  if ((type === 'heritage_showcase' || type === 'hillbrook' || type === 'hba') && (c.variant === 'header' || c.variant === 'footer')) return c.variant
   if (type === 'features_strip' && c.layoutVariant === 'travel-footer') return 'footer'
   return null
 }
