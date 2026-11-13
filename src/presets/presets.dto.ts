@@ -25,6 +25,25 @@ export class CreatePresetDto {
   source_page_id?: string
 }
 
+export class UpdatePresetDto {
+  @IsOptional()
+  @IsString()
+  @Length(1, 150)
+  name?: string
+
+  @IsOptional()
+  @IsObject()
+  payload?: Record<string, unknown>
+
+  @IsOptional()
+  @IsUUID()
+  group_id?: string | null
+
+  @IsOptional()
+  @IsUUID()
+  source_page_id?: string
+}
+
 export class ActivatePresetDto {
   @IsIn(['scope', 'new-pages', 'both'])
   target!: 'scope' | 'new-pages' | 'both'

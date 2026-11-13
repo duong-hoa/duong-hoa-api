@@ -1,6 +1,6 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common'
 import { JwtAuthGuard } from '../auth/jwt-auth.guard'
-import { ActivatePresetDto, AssignPresetGroupDto, CreatePageFromPresetDto, CreatePresetDto, CreatePresetGroupDto, RenamePresetGroupDto, ResetPresetSelectionDto } from './presets.dto'
+import { ActivatePresetDto, AssignPresetGroupDto, CreatePageFromPresetDto, CreatePresetDto, CreatePresetGroupDto, RenamePresetGroupDto, ResetPresetSelectionDto, UpdatePresetDto } from './presets.dto'
 import { PresetsService } from './presets.service'
 
 @UseGuards(JwtAuthGuard)
@@ -33,6 +33,9 @@ export class PresetsController {
 
   @Post()
   create(@Body() input: CreatePresetDto) { return this.presets.create(input) }
+
+  @Patch(':id')
+  update(@Param('id') id: string, @Body() input: UpdatePresetDto) { return this.presets.update(id, input) }
 
   @Post('reset-selection')
   resetSelection(@Body() input: ResetPresetSelectionDto) { return this.presets.resetSelection(input) }

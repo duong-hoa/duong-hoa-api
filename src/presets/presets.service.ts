@@ -2,7 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { randomUUID } from 'node:crypto'
 import { Prisma, type ContentBlock, type Page } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
-import { AssignPresetGroupDto, CreatePageFromPresetDto, CreatePresetDto, CreatePresetGroupDto, RenamePresetGroupDto, ResetPresetSelectionDto } from './presets.dto'
+import { AssignPresetGroupDto, CreatePageFromPresetDto, CreatePresetDto, CreatePresetGroupDto, RenamePresetGroupDto, ResetPresetSelectionDto, UpdatePresetDto } from './presets.dto'
 
 type PageSnapshot = {
   page: {
@@ -189,6 +189,47 @@ export class PresetsService {
     }
     const preset = await this.prisma.cmsPreset.create({ data: { kind: input.kind, scope, name, groupId: input.group_id ?? null, payload: json(payload) } })
     return { id: preset.id }
+  }
+
+  async update(id: string, input: UpdatePresetDto) {
+    const preset = await this.prisma.cmsPreset.findUnique({ where: { id } })
+    if (!preset) throw new NotFoundException('Không tìm thấy preset')
+
+    const data: Prisma.CmsPresetUpdateInput = {}
+    if (input.name !== undefined) {
+      const name = input.name.trim()
+      if (!name) throw new BadRequestException('Tên preset không được để trống')
+      data.name = name
+    }
+    if (input.group_id !== undefined) {
+      if (input.group_id) {
+        const group = await this.prisma.cmsPresetGroup.findUnique({ where: { id: input.group_id }, select: { kind: true } })
+        if (!group || group.kind !== preset.kind) throw new BadRequestException('Nhóm preset không phù hợp với loại preset này')
+      }
+      data.group = input.group_id ? { connect: { id: input.group_id } } : { disconnect: true }
+    }
+
+    let payload: unknown = preset.payload
+    if (preset.kind === 'page' && input.source_page_id !== undefined) {
+      if (input.source_page_id !== preset.scope) throw new BadRequestException('Trang nguồn không khớp phạm vi preset')
+      payload = snapshotPage(await getPage(this.prisma, input.source_page_id))
+    } else if (input.payload !== undefined) {
+      if (preset.kind === 'page') {
+        payload = input.payload
+        asSnapshot(json(payload) as Prisma.JsonValue)
+      } else {
+        if (typeof input.payload.block_type !== 'string' ||
+            !input.payload.content || typeof input.payload.content !== 'object' || Array.isArray(input.payload.content)) {
+          throw new BadRequestException('Preset block phải có loại block và nội dung')
+        }
+        payload = input.payload
+      }
+    }
+
+    if (JSON.stringify(payload).length > 5_000_000) throw new BadRequestException('Preset vượt quá kích thước cho phép')
+    data.payload = json(payload)
+    await this.prisma.cmsPreset.update({ where: { id }, data })
+    return { success: true }
   }
 
   async activate(id: string, target: 'scope' | 'new-pages' | 'both') {
