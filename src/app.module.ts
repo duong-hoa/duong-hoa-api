@@ -12,6 +12,7 @@ import { AccountsModule } from './accounts/accounts.module'
 import { MediaModule } from './media/media.module'
 import { StorageModule } from './storage/storage.module'
 import { TranslateModule } from './translate/translate.module'
+import { PresetsModule } from './presets/presets.module'
 
 @Module({
   imports: [
@@ -28,6 +29,7 @@ import { TranslateModule } from './translate/translate.module'
     MediaModule,
     StorageModule,
     TranslateModule,
+    PresetsModule,
   ],
 })
 export class AppModule {}

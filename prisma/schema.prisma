@@ -34,6 +34,7 @@ model Page {
   blocks        ContentBlock[]
   mapLocations  MapLocation[]
   category      PageCategory? @relation(fields: [categoryId], references: [id], onDelete: SetNull)
+  presetBaseline CmsPresetPageBaseline?
 
   @@map("pages")
   @@index([isTemplate, updatedAt])
@@ -127,6 +128,38 @@ model SiteSetting {
   updatedAt DateTime @default(now()) @map("updated_at") @db.Timestamptz
 
   @@map("site_settings")
+}
+
+// Named editor snapshots are private to the CMS and never exposed by public APIs.
+model CmsPreset {
+  id         String   @id @default(uuid()) @db.Uuid
+  kind       String
+  scope      String
+  name       String
+  payload    Json
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt  DateTime @updatedAt @map("updated_at") @db.Timestamptz
+  selections CmsPresetSelection[]
+
+  @@index([kind, scope, createdAt])
+  @@map("cms_presets")
+}
+
+model CmsPresetSelection {
+  key      String @id
+  presetId String @map("preset_id") @db.Uuid
+  preset   CmsPreset @relation(fields: [presetId], references: [id], onDelete: Cascade)
+
+  @@map("cms_preset_selections")
+}
+
+model CmsPresetPageBaseline {
+  pageId      String @id @map("page_id") @db.Uuid
+  snapshot    Json
+  sourceScope String? @map("source_scope")
+  page        Page @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@map("cms_preset_page_baselines")
 }
 
 model Post {
