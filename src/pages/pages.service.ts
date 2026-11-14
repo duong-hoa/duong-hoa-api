@@ -6,6 +6,7 @@ import { PrismaService } from '../prisma/prisma.service'
 import { compact } from '../common/compact.util'
 import { translateContent } from '../common/localize.util'
 import { siteBlockKind, type SiteBlockKind } from '../common/site-block.util'
+import { remapCmsLinks } from '../common/cms-link.util'
 import { PageInputDto } from './dto/page-input.dto'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
@@ -174,6 +175,8 @@ export class PagesService {
       const page = await tx.page.findUnique({ where: { id } })
       if (!page) throw new NotFoundException('Không tìm thấy trang gốc')
       const description = input.description === undefined ? page.description : input.description
+      const blocks = await tx.contentBlock.findMany({ where: { pageId: id }, orderBy: { sortOrder: 'asc' } })
+      const copy = { blockIds: new Map(blocks.map(block => [block.id, randomUUID()])), sourceSlug: page.slug, targetSlug: input.slug as string }
 
       const created = await tx.page.create({
         data: {
@@ -184,19 +187,19 @@ export class PagesService {
           audioUrl: input.audio_url ?? page.audioUrl,
           isPublished: false,
           sortOrder: input.sort_order ?? page.sortOrder + 5,
-          subNav: page.subNav as Prisma.InputJsonValue,
+          subNav: remapCmsLinks(page.subNav, copy) as Prisma.InputJsonValue,
           categoryId: page.categoryId,
         },
       })
 
-      const blocks = await tx.contentBlock.findMany({ where: { pageId: id }, orderBy: { sortOrder: 'asc' } })
       for (const block of blocks) {
         await tx.contentBlock.create({
           data: {
+            id: copy.blockIds.get(block.id),
             pageId: created.id,
             blockType: block.blockType,
             sortOrder: block.sortOrder,
-            content: block.content as Prisma.InputJsonValue,
+            content: remapCmsLinks(block.content, copy) as Prisma.InputJsonValue,
             isVisible: block.isVisible,
             label: block.label,
           },
@@ -329,18 +332,21 @@ export class PagesService {
       }) : null
       const source = input.source_page_id ? await tx.page.findUnique({ where: { id: input.source_page_id }, include: { blocks: { orderBy: { sortOrder: 'asc' } } } }) : null
       if (input.source_page_id && !source) throw new NotFoundException('Không tìm thấy trang nguồn')
+      const templateSlug = `mau-trang-${randomUUID()}`
+      const copy = { blockIds: new Map((source?.blocks || []).map(block => [block.id, randomUUID()])), sourceSlug: source?.slug || '', targetSlug: templateSlug }
       const created = await tx.page.create({ data: {
-        slug: `mau-trang-${randomUUID()}`,
+        slug: templateSlug,
         title: (source?.title ?? { vi: name, en: '', ru: '', zh: '' }) as Prisma.InputJsonValue,
         ...(source ? { description: source.description === null ? Prisma.DbNull : source.description as Prisma.InputJsonValue } : {}),
         seoImage: source?.seoImage ?? null, audioUrl: source?.audioUrl ?? null,
-        subNav: (source?.subNav ?? []) as Prisma.InputJsonValue, categoryId: source?.categoryId ?? null,
+        subNav: remapCmsLinks(source?.subNav ?? [], copy) as Prisma.InputJsonValue, categoryId: source?.categoryId ?? null,
         isPublished: false, isTemplate: true, templateName: name, templateCollectionId,
       } })
       if (source) {
         for (const block of source.blocks) await tx.contentBlock.create({ data: {
+          id: copy.blockIds.get(block.id),
           pageId: created.id, blockType: block.blockType, sortOrder: block.sortOrder,
-          content: block.content as Prisma.InputJsonValue, isVisible: block.isVisible, label: block.label,
+          content: remapCmsLinks(block.content, copy) as Prisma.InputJsonValue, isVisible: block.isVisible, label: block.label,
         } })
       } else {
         for (const [i, block] of (input.blocks ?? []).entries()) {
@@ -403,8 +409,15 @@ export class PagesService {
 
   async createBlock(input: BlockInputDto) {
     if (!input.page_id) throw new NotFoundException('page_id is required')
+    let copy: { id: string; content: unknown } | undefined
+    if (input.source_block_id) {
+      const source = await this.prisma.contentBlock.findFirst({ where: { id: input.source_block_id, pageId: input.page_id }, include: { page: { select: { slug: true } } } })
+      if (!source) throw new NotFoundException('Không tìm thấy block nguồn trong trang')
+      const id = randomUUID()
+      copy = { id, content: remapCmsLinks(input.content ?? source.content, { blockIds: new Map([[source.id, id]]), sourceSlug: source.page.slug, targetSlug: source.page.slug }) }
+    }
     const block = await this.prisma.contentBlock.create({
-      data: { pageId: input.page_id, ...blockInputToPrisma(input) } as Prisma.ContentBlockCreateInput,
+      data: { pageId: input.page_id, ...blockInputToPrisma(input), ...(copy ? { id: copy.id, content: copy.content } : {}) } as Prisma.ContentBlockCreateInput,
     })
     return toBlockRow(block)
   }

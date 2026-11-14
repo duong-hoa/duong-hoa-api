@@ -6,6 +6,10 @@ import { IsBoolean, IsInt, IsOptional, IsString, IsUUID } from 'class-validator'
 export class BlockInputDto {
   @IsOptional()
   @IsUUID()
+  source_block_id?: string
+
+  @IsOptional()
+  @IsUUID()
   page_id?: string
 
   @IsOptional()

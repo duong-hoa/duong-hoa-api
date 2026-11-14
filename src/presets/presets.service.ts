@@ -2,10 +2,12 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { randomUUID } from 'node:crypto'
 import { Prisma, type ContentBlock, type Page } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
+import { remapCmsLinks } from '../common/cms-link.util'
 import { AssignPresetGroupDto, CreatePageFromPresetDto, CreatePresetDto, CreatePresetGroupDto, RenamePresetGroupDto, ResetPresetSelectionDto, UpdatePresetDto } from './presets.dto'
 
 type PageSnapshot = {
   page: {
+    slug?: string
     title: Prisma.JsonValue
     description: Prisma.JsonValue | null
     seoImage: string | null
@@ -27,6 +29,7 @@ type PageSnapshot = {
 function snapshotPage(page: Page & { blocks: ContentBlock[] }): PageSnapshot {
   return {
     page: {
+      slug: page.slug,
       title: page.title, description: page.description, seoImage: page.seoImage,
       audioUrl: page.audioUrl, sortOrder: page.sortOrder, subNav: page.subNav, categoryId: page.categoryId,
     },
@@ -312,19 +315,23 @@ export class PresetsService {
       const sortOrder = input.sort_order ?? snapshot.page.sortOrder
       const selectedCategory = input.category_id === undefined ? snapshot.page.categoryId : input.category_id
       const selectedCategoryId = await categoryId(tx, selectedCategory)
+      const sourceSlug = snapshot.page.slug ?? (await tx.page.findUnique({ where: { id: preset.scope }, select: { slug: true } }))?.slug ?? ''
+      const copy = { blockIds: new Map(snapshot.blocks.map(block => [block.id, randomUUID()])), sourceSlug, targetSlug: input.slug }
+      const originalCopy = original ? { blockIds: new Map(original.blocks.map(block => [block.id, randomUUID()])), sourceSlug: original.page.slug || '', targetSlug: input.slug } : null
       const page = await tx.page.create({ data: {
         slug: input.slug, title: json(title),
         description: snapshot.page.description === null ? Prisma.DbNull : json(snapshot.page.description),
         seoImage: snapshot.page.seoImage, audioUrl: snapshot.page.audioUrl,
-        sortOrder, subNav: json(snapshot.page.subNav), categoryId: selectedCategoryId, isPublished: false,
+        sortOrder, subNav: json(remapCmsLinks(snapshot.page.subNav, copy)), categoryId: selectedCategoryId, isPublished: false,
       } })
       for (const block of snapshot.blocks) await tx.contentBlock.create({ data: {
+        id: copy.blockIds.get(block.id),
         pageId: page.id, blockType: block.blockType, sortOrder: block.sortOrder,
-        content: json(block.content), isVisible: block.isVisible, label: block.label,
+        content: json(remapCmsLinks(block.content, copy)), isVisible: block.isVisible, label: block.label,
       } })
-      const baseline: PageSnapshot = original ? {
-        page: { ...original.page, title: title as Prisma.JsonValue, sortOrder, categoryId: selectedCategoryId },
-        blocks: original.blocks.map(block => ({ ...block, id: randomUUID() })),
+      const baseline: PageSnapshot = original && originalCopy ? {
+        page: { ...original.page, slug: input.slug, title: title as Prisma.JsonValue, sortOrder, categoryId: selectedCategoryId, subNav: remapCmsLinks(original.page.subNav, originalCopy) },
+        blocks: original.blocks.map(block => ({ ...block, id: originalCopy.blockIds.get(block.id)!, content: remapCmsLinks(block.content, originalCopy) })),
       } : {
         page: { title: title as Prisma.JsonValue, description: { vi: '', en: '', ru: '', zh: '' }, seoImage: null, audioUrl: null, sortOrder, subNav: [], categoryId: selectedCategoryId },
         blocks: [],
