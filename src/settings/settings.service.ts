@@ -1,10 +1,11 @@
-import { Injectable } from '@nestjs/common'
+import { BadRequestException, Injectable } from '@nestjs/common'
 import type { Prisma } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { PagesService } from '../pages/pages.service'
 import { PostsService } from '../posts/posts.service'
 import { SiteSettingsDto } from './dto/site-settings.dto'
 import { resolveAssetUrl } from '../common/assets.util'
+import { siteBlockKind, siteChromeMode } from '../common/site-block.util'
 
 const ADMIN_SETTINGS_KEYS = [
   'site_title',
@@ -47,10 +48,21 @@ export class SettingsService {
   }
 
   async setAdminSettings(settings: SiteSettingsDto) {
-    for (const [key, value] of Object.entries(settings)) {
+    for (const kind of ['header', 'footer'] as const) {
+      const value = settings[`${kind}_settings`]
       if (value === undefined) continue
-      await this.setSetting(key, value)
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestException(`Cấu hình ${kind} không hợp lệ`)
+      const config = value as Record<string, unknown>
+      if (config.mode !== undefined && !['none', 'block', 'default'].includes(String(config.mode))) throw new BadRequestException(`Chế độ ${kind} không hợp lệ`)
+      if (siteChromeMode(config) !== 'block') continue
+      if (typeof config.blockId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(config.blockId)) throw new BadRequestException(`Vui lòng chọn block ${kind}`)
+      const block = await this.prisma.contentBlock.findFirst({ where: { id: config.blockId, isVisible: true } })
+      if (!block || siteBlockKind(block.blockType, block.content) !== kind) throw new BadRequestException(`Block ${kind} đã bị ẩn, xóa hoặc không đúng loại. Vui lòng chọn lại.`)
     }
+    const updates = Object.entries(settings).filter(([, value]) => value !== undefined)
+    await this.prisma.$transaction(updates.map(([key, value]) => this.prisma.siteSetting.upsert({
+      where: { key }, update: { value: value as Prisma.InputJsonValue, updatedAt: new Date() }, create: { key, value: value as Prisma.InputJsonValue },
+    })))
   }
 
   async getAdminBlogSettings() {

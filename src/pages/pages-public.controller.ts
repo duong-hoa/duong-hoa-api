@@ -28,7 +28,7 @@ export class PagesPublicController {
   }
 
   @Get('pages/:slug/blocks')
-  getPageBlocks(@Param('slug') slug: string, @Query('locale') locale?: string) {
-    return this.pagesService.getPublishedPageBlocks(slug, locale || 'vi')
+  getPageBlocks(@Param('slug') slug: string, @Query('locale') locale?: string, @Query('includeSiteChrome') includeSiteChrome?: string) {
+    return this.pagesService.getPublishedPageBlocks(slug, locale || 'vi', includeSiteChrome === 'true')
   }
 }
