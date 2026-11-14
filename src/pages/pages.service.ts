@@ -5,7 +5,7 @@ import type { ContentBlock, Page, PageCategory } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { compact } from '../common/compact.util'
 import { translateContent } from '../common/localize.util'
-import { siteBlockKind, type SiteBlockKind } from '../common/site-block.util'
+import { siteBlockKind, siteChromeMode, siteBlockLocalLinks, siteHeaderMissingLinks, type SiteBlockKind, type SiteChromeMode } from '../common/site-block.util'
 import { remapCmsLinks } from '../common/cms-link.util'
 import { PageInputDto } from './dto/page-input.dto'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
@@ -106,29 +106,32 @@ export class PagesService {
 
   async getSiteBlockCandidates() {
     const blocks = await this.prisma.contentBlock.findMany({
-      where: { isVisible: true, page: { isTemplate: false } },
-      include: { page: { select: { slug: true, title: true, isPublished: true } } },
+      where: { isVisible: true },
+      include: { page: { select: { slug: true, title: true, isPublished: true, isTemplate: true } } },
       orderBy: [{ page: { sortOrder: 'asc' } }, { sortOrder: 'asc' }],
     })
     return blocks.flatMap(block => {
       const kind = siteBlockKind(block.blockType, block.content)
-      return kind ? [{ id: block.id, kind, label: block.label, block_type: block.blockType, page_slug: block.page.slug, page_title: block.page.title, page_published: block.page.isPublished }] : []
+      return kind ? [{ id: block.id, kind, label: block.label, block_type: block.blockType, page_slug: block.page.slug, page_title: block.page.title, page_published: block.page.isPublished, page_template: block.page.isTemplate, local_links: siteBlockLocalLinks(block.content), missing_links: kind === 'header' ? siteHeaderMissingLinks(block.content) : [] }] : []
     })
   }
 
   async getSiteBlocks(locale: string) {
     const settings = await this.prisma.siteSetting.findMany({ where: { key: { in: ['header_settings', 'footer_settings'] } } })
     const result: Record<SiteBlockKind, ReturnType<typeof toBlockRow> | null> = { header: null, footer: null }
+    const modes: Record<SiteBlockKind, SiteChromeMode> = { header: 'default', footer: 'default' }
     for (const kind of ['header', 'footer'] as const) {
       const value = settings.find(row => row.key === `${kind}_settings`)?.value
+      modes[kind] = siteChromeMode(value)
+      if (modes[kind] !== 'block') continue
       const id = value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>).blockId : null
       if (typeof id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id)) continue
       // Selecting a specific block in site settings publishes that block alone,
       // even if its source page is a draft. Other draft blocks stay private.
-      const block = await this.prisma.contentBlock.findFirst({ where: { id, isVisible: true, page: { isTemplate: false } } })
-      if (block && siteBlockKind(block.blockType, block.content) === kind) result[kind] = { ...toBlockRow(block), content: translateContent(block.content, locale) }
+      const block = await this.prisma.contentBlock.findFirst({ where: { id, isVisible: true }, include: { page: { select: { slug: true, isPublished: true } } } })
+      if (block && siteBlockKind(block.blockType, block.content) === kind) result[kind] = { ...toBlockRow(block), content: translateContent(block.content, locale), ...{ source_page_slug: block.page.slug, source_page_published: block.page.isPublished } }
     }
-    return result
+    return { ...result, modes }
   }
 
   // ── Admin ────────────────────────────────────────────────────────────
@@ -514,7 +517,7 @@ export class PagesService {
     }))
   }
 
-  async getPublishedPageBlocks(slug: string, locale = 'vi') {
+  async getPublishedPageBlocks(slug: string, locale = 'vi', includeSiteChrome = false) {
     const page = await this.prisma.page.findFirst({
       where: { slug, isPublished: true, isTemplate: false },
       select: { id: true, audioUrl: true },
@@ -527,10 +530,12 @@ export class PagesService {
     })
     if (!blocks.length) return null
 
-    const siteBlocks = await this.getSiteBlocks(locale)
+    // New consumers keep full templates intact and suppress shared chrome in
+    // their shell. Retain the old response during staggered API/web deploys.
+    const selected = includeSiteChrome ? null : await this.getSiteBlocks(locale)
     return blocks.filter(block => {
       const kind = siteBlockKind(block.blockType, block.content)
-      return !kind || !siteBlocks[kind]
+      return !selected || !kind || !selected[kind]
     }).map((block) => ({
       ...toBlockRow(block),
       content: translateContent(block.content, locale),
