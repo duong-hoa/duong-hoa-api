@@ -30,6 +30,8 @@ const NON_TRANSLATABLE_KEYS = new Set([
   'sort_order', 'is_visible', 'block_type', 'page_id',
   'youtubeId', 'ornamentPosition',
   'iconKey', 'number', 'priceVnd',
+  'linkAnchor', 'linkAnchorAliases', 'blockButtonsPosition', 'blockButtonsAlign',
+  'size', 'icon', 'newTab', 'backgroundColor', 'textColor', 'borderColor', 'radius',
 ])
 
 const URL_KEYS = new Set(['src', 'href', 'image', 'cover_image', 'seo_image'])

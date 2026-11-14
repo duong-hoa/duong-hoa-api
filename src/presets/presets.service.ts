@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto'
 import { Prisma, type ContentBlock, type Page } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
 import { remapCmsLinks } from '../common/cms-link.util'
+import { validateBlockNavigation } from '../common/block-navigation.util'
 import { AssignPresetGroupDto, CreatePageFromPresetDto, CreatePresetDto, CreatePresetGroupDto, RenamePresetGroupDto, ResetPresetSelectionDto, UpdatePresetDto } from './presets.dto'
 
 type PageSnapshot = {
@@ -46,7 +47,9 @@ function asSnapshot(value: Prisma.JsonValue): PageSnapshot {
       !Array.isArray(value.blocks) || value.blocks.length > 1000) {
     throw new BadRequestException('Dữ liệu preset trang không hợp lệ')
   }
-  return value as unknown as PageSnapshot
+  const snapshot = value as unknown as PageSnapshot
+  for (const block of snapshot.blocks) validateBlockNavigation(block.content)
+  return snapshot
 }
 
 function json(value: unknown): Prisma.InputJsonValue {
@@ -184,6 +187,7 @@ export class PresetsService {
         throw new BadRequestException('Preset block phải có loại block và nội dung')
       }
       payload = input.payload
+      validateBlockNavigation(input.payload.content)
     }
     if (JSON.stringify(payload).length > 5_000_000) throw new BadRequestException('Preset vượt quá kích thước cho phép')
     if (input.group_id) {
@@ -226,6 +230,7 @@ export class PresetsService {
           throw new BadRequestException('Preset block phải có loại block và nội dung')
         }
         payload = input.payload
+        validateBlockNavigation(input.payload.content)
       }
     }
 

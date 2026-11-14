@@ -17,9 +17,16 @@ async function main() {
       images: [{ src: '/uploads/anh.jpg', alt: { vi: 'Ảnh di sản' }, caption: 'Chú thích' }],
       galleryBelow: [{ src: 'https://example.com/anh.jpg', caption: { vi: 'Cổng cổ' } }],
       prefix: { vi: 'Di sản' }, bgImage: '/uploads/nen.jpg',
+      linkAnchor:'cau-chuyen',linkAnchorAliases:['neo-cu'],blockButtonsPosition:'before',blockButtonsAlign:'right',
+      blockButtons:[{id:'button-1',label:{vi:'Khám phá'},href:'/vi/blog/le-hoi',variant:'outline',size:'large',icon:'arrow',radius:3,newTab:true,backgroundColor:'#123456',textColor:'#ffffff'}],
     }
     const out = await service.translateContentObject(input, 'vi', 'gemini')
     assert.equal(out.title.en, 'en:Câu chuyện')
+    assert.equal(out.blockButtons[0].label.en,'en:Khám phá')
+    assert.equal(out.blockButtons[0].href,input.blockButtons[0].href)
+    assert.equal(out.blockButtons[0].variant,'outline');assert.equal(out.blockButtons[0].size,'large')
+    assert.equal(out.blockButtons[0].icon,'arrow');assert.equal(out.blockButtons[0].backgroundColor,'#123456')
+    assert.equal(out.linkAnchor,'cau-chuyen');assert.deepEqual(out.linkAnchorAliases,['neo-cu'])
     assert.equal(out.body[0].ru, 'ru:Đoạn giới thiệu')
     assert.equal(out.columns[0].title.en, 'en:Khám phá')
     assert.equal(out.columns[0].links[0].label.en, 'en:Điểm đến')

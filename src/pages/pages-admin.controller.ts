@@ -140,6 +140,9 @@ export class BlocksAdminController {
   @Get('site-candidates')
   siteCandidates() { return this.pagesService.getSiteBlockCandidates() }
 
+  @Get('link-targets')
+  linkTargets() { return this.pagesService.getCmsLinkIndex() }
+
   @Post()
   createBlock(@Body() input: BlockInputDto) {
     return this.pagesService.createBlock(input)

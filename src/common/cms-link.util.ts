@@ -1,8 +1,9 @@
-type CopyContext = { blockIds: ReadonlyMap<string, string>; sourceSlug: string; targetSlug: string }
+type CopyContext = { blockIds: ReadonlyMap<string, string>; sourceSlug: string; targetSlug: string; anchors?: ReadonlyMap<string,string> }
 
 /** Copy links with the page, without rewriting prose, media sources or links to other pages. */
 export function remapCmsLinks<T>(value: T, context: CopyContext): T {
   const anchor = (input: string) => {
+    if (context.anchors?.has(input)) return context.anchors.get(input)!
     for (const [oldId, newId] of context.blockIds) {
       if (input === oldId) return newId
       const prefix = `editorial-${oldId.replace(/[^a-zA-Z0-9_-]/g, '')}-`

@@ -7,6 +7,7 @@ import { compact } from '../common/compact.util'
 import { translateContent } from '../common/localize.util'
 import { siteBlockKind, type SiteBlockKind } from '../common/site-block.util'
 import { remapCmsLinks } from '../common/cms-link.util'
+import { blockObject, copyBlockNavigation, namedBlockAnchor, preserveAnchorHistory, reservedBlockAnchors, validateBlockNavigation } from '../common/block-navigation.util'
 import { PageInputDto } from './dto/page-input.dto'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
@@ -140,6 +141,22 @@ export class PagesService {
       orderBy: { sortOrder: 'asc' },
     })
     return pages.map((page) => ({ ...toPageRow(page), page_categories: toCategoryJoin(page.category) }))
+  }
+
+  async getCmsLinkIndex() {
+    const [pages,blocks,posts]=await Promise.all([
+      this.prisma.page.findMany({where:{isTemplate:false},select:{id:true,slug:true,title:true,isPublished:true},orderBy:{sortOrder:'asc'}}),
+      this.prisma.contentBlock.findMany({where:{page:{isTemplate:false}},select:{id:true,pageId:true,blockType:true,label:true,isVisible:true,sortOrder:true,content:true},orderBy:{sortOrder:'asc'}}),
+      this.prisma.post.findMany({select:{id:true,slug:true,title:true,isPublished:true},orderBy:{publishedAt:'desc'}}),
+    ])
+    return {
+      pages:pages.map(page=>({id:page.id,slug:page.slug,title:page.title,is_published:page.isPublished})),
+      blocks:blocks.filter(block=>namedBlockAnchor(block.content,block.blockType)).map(block=>{
+        const c=blockObject(block.content)
+        return {id:block.id,page_id:block.pageId,block_type:block.blockType,label:block.label,is_visible:block.isVisible,sort_order:block.sortOrder,content:{linkAnchor:namedBlockAnchor(c,block.blockType),title:c.title,brand:c.brand,quote:c.quote,variant:c.variant}}
+      }),
+      posts:posts.map(post=>({id:post.id,slug:post.slug,title:post.title,is_published:post.isPublished})),
+    }
   }
 
   async getAdminPageBySlug(slug: string) {
@@ -349,8 +366,14 @@ export class PagesService {
           content: remapCmsLinks(block.content, copy) as Prisma.InputJsonValue, isVisible: block.isVisible, label: block.label,
         } })
       } else {
+        const usedAnchors = new Set<string>()
         for (const [i, block] of (input.blocks ?? []).entries()) {
           if (!block.block_type) throw new BadRequestException('Block mẫu thiếu loại bố cục')
+          validateBlockNavigation(block.content)
+          for (const anchor of reservedBlockAnchors(block.content, block.block_type)) {
+            if (usedAnchors.has(anchor)) throw new BadRequestException(`Neo #${anchor} bị trùng trong mẫu trang`)
+            usedAnchors.add(anchor)
+          }
           await tx.contentBlock.create({ data: {
             pageId: created.id, blockType: block.block_type, sortOrder: block.sort_order ?? i,
             content: (block.content ?? {}) as Prisma.InputJsonValue, isVisible: block.is_visible ?? true, label: block.label,
@@ -409,24 +432,51 @@ export class PagesService {
 
   async createBlock(input: BlockInputDto) {
     if (!input.page_id) throw new NotFoundException('page_id is required')
-    let copy: { id: string; content: unknown } | undefined
-    if (input.source_block_id) {
-      const source = await this.prisma.contentBlock.findFirst({ where: { id: input.source_block_id, pageId: input.page_id }, include: { page: { select: { slug: true } } } })
-      if (!source) throw new NotFoundException('Không tìm thấy block nguồn trong trang')
-      const id = randomUUID()
-      copy = { id, content: remapCmsLinks(input.content ?? source.content, { blockIds: new Map([[source.id, id]]), sourceSlug: source.page.slug, targetSlug: source.page.slug }) }
-    }
-    const block = await this.prisma.contentBlock.create({
-      data: { pageId: input.page_id, ...blockInputToPrisma(input), ...(copy ? { id: copy.id, content: copy.content } : {}) } as Prisma.ContentBlockCreateInput,
+    return this.prisma.$transaction(async tx=>{
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.page_id!}))`
+      const siblings=await tx.contentBlock.findMany({where:{pageId:input.page_id},select:{id:true,blockType:true,content:true}})
+      const used=new Set(siblings.flatMap(block=>[block.id,...reservedBlockAnchors(block.content,block.blockType)]))
+      let id:string|undefined,content=input.content
+      if(input.source_block_id){
+        const source=await tx.contentBlock.findFirst({where:{id:input.source_block_id,pageId:input.page_id},include:{page:{select:{slug:true}}}})
+        if(!source)throw new NotFoundException('Không tìm thấy block nguồn trong trang')
+        id=randomUUID()
+        const copied=copyBlockNavigation(input.content??source.content,source.blockType,used)
+        for(const alias of reservedBlockAnchors(source.content,source.blockType))if(!copied.anchors.has(alias))copied.anchors.set(alias,id)
+        content=remapCmsLinks(copied.content,{blockIds:new Map([[source.id,id]]),sourceSlug:source.page.slug,targetSlug:source.page.slug,anchors:copied.anchors})
+      }else if(content&&typeof content==='object'){
+        content={...blockObject(content)};delete (content as Record<string,unknown>).linkAnchorAliases
+        const conflicts=reservedBlockAnchors(content,input.block_type||'').find(anchor=>used.has(anchor))
+        if(conflicts)throw new BadRequestException(`Neo #${conflicts} đã được block khác trong trang sử dụng`)
+      }
+      validateBlockNavigation(content)
+      const block=await tx.contentBlock.create({data:{pageId:input.page_id,...blockInputToPrisma(input),...(id?{id}:{}),...(content!==undefined?{content}:{} )} as Prisma.ContentBlockCreateInput})
+      return toBlockRow(block)
     })
-    return toBlockRow(block)
   }
 
   async updateBlock(id: string, input: BlockInputDto) {
-    const block = await this.prisma.contentBlock
-      .update({ where: { id }, data: { ...blockInputToPrisma(input), updatedAt: new Date() } })
-      .catch(() => null)
-    return block ? toBlockRow(block) : null
+    return this.prisma.$transaction(async tx=>{
+      const parent=await tx.contentBlock.findUnique({where:{id},select:{pageId:true}})
+      if(!parent)return null
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${parent.pageId}))`
+      const current=await tx.contentBlock.findUnique({where:{id}})
+      if(!current)return null
+      let content=input.content
+      if(content!==undefined){
+        validateBlockNavigation(content)
+        const type=input.block_type??current.blockType
+        content=preserveAnchorHistory(current.content,content,type)
+        if(namedBlockAnchor(current.content,current.blockType)!==namedBlockAnchor(content,type)){
+          const siblings=await tx.contentBlock.findMany({where:{pageId:current.pageId,id:{not:id}},select:{id:true,blockType:true,content:true}})
+          const used=new Set(siblings.flatMap(block=>[block.id,...reservedBlockAnchors(block.content,block.blockType)]))
+          const conflict=reservedBlockAnchors(content,type).find(anchor=>used.has(anchor))
+          if(conflict)throw new BadRequestException(`Neo #${conflict} đã được block khác trong trang sử dụng`)
+        }
+      }
+      const block=await tx.contentBlock.update({where:{id},data:{...blockInputToPrisma(input),...(content!==undefined?{content:content as Prisma.InputJsonValue}:{}),updatedAt:new Date()}})
+      return toBlockRow(block)
+    })
   }
 
   async deleteBlock(id: string) {
