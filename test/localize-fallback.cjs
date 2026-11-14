@@ -17,4 +17,8 @@ assert.equal(result.pictures[0].tone, 'grayscale')
 assert.equal(result.editorialLayout, 'right')
 assert.equal(result.thumbnailRadius, 0)
 assert.equal(source.title.en, '   ')
+const arrays = { body: { vi: ['Một', 'Hai'], en: [], ru: [], zh: [] }, nested: { vi: [{ title: { vi: 'Ảnh', en: 'Photo' } }], en: [] } }
+for (const locale of ['en', 'ru', 'zh']) assert.deepEqual(translateContent(arrays, locale).body, ['Một', 'Hai'])
+assert.equal(translateContent(arrays, 'en').nested[0].title, 'Photo')
+assert.deepEqual(arrays.body.en, [])
 console.log('Localized CMS content falls back for blank translations')
