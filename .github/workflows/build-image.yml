@@ -1,79 +1,41 @@
-name: Build and publish image
-
+name: Promote approved Dương Hòa MCP image
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
     inputs:
       publish_production:
-        description: "Promote :prod only after explicit production release approval"
         type: boolean
-        required: false
+        required: true
         default: false
-
 permissions:
   contents: read
+  actions: read
   packages: write
-
-# A new run replaces an older build for the same branch. Feature-branch
-# dispatches never share the production publishing lane.
-concurrency:
-  group: image-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  IMAGE: ghcr.io/duong-hoa/duong-hoa-api
-
 jobs:
-  build:
+  promote:
+    if: ${{ inputs.publish_production == true }}
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
+      - name: Verify the exact successful main build
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          test "$(gh api repos/duong-hoa/duong-hoa-api/actions/runs/44863856163 --jq '.head_sha')" = '4ccddb5cd2234129bcd4bd56e9fe6f105b3a9957'
+          test "$(gh api repos/duong-hoa/duong-hoa-api/actions/runs/44863856163 --jq '.head_branch')" = 'main'
+          test "$(gh api repos/duong-hoa/duong-hoa-api/actions/runs/44863856163 --jq '.conclusion')" = 'success'
+          test "$(gh api repos/duong-hoa/duong-hoa-api/git/ref/heads/main --jq '.object.sha')" = '4ccddb5cd2234129bcd4bd56e9fe6f105b3a9957'
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        id: build
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          push: true
-          tags: ${{ env.IMAGE }}:sha-${{ github.sha }}
-          labels: |
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Record commit image
-        env:
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: echo "${IMAGE}@${IMAGE_DIGEST}" >> "${GITHUB_STEP_SUMMARY}"
-
-      - name: Publish production channel (explicit approval only)
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_production == true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        shell: bash
+      - name: Promote the verified digest without rebuilding
         run: |
           set -euo pipefail
-          # A rerun of an old commit must not move :prod backwards.
-          current_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          if [[ "$current_sha" != "$GITHUB_SHA" ]]; then
-            echo "Skipping :prod promotion because main has moved."
-            exit 0
-          fi
-          docker buildx imagetools create --prefer-index=false \
-            --tag "${IMAGE}:prod" "${IMAGE}@${IMAGE_DIGEST}"
+          image=ghcr.io/duong-hoa/duong-hoa-api
+          digest=sha256:58de8977048b4e34a843977add7abc2b83c252c12d8d5f78497ce77f9dce68e9
+          docker buildx imagetools create --prefer-index=false --tag "$image:prod" "$image@$digest"
+          actual="$(docker buildx imagetools inspect "$image:prod" | awk '/^Digest:/ {print $2; exit}')"
+          test "$actual" = "$digest"
+          echo "$image@$actual" >> "$GITHUB_STEP_SUMMARY"
