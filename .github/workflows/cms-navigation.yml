@@ -46,3 +46,5 @@ jobs:
       - run: node test/cms-links.integration.cjs
       - run: node test/translate-block-content.cjs
       - run: node test/localize-fallback.cjs
+      - run: node test/cms-mcp.integration.cjs
+      - run: node test/cms-mcp-client-credentials.cjs

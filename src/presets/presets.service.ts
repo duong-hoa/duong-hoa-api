@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { randomUUID } from 'node:crypto'
 import { Prisma, type ContentBlock, type Page } from '@prisma/client'
 import { PrismaService } from '../prisma/prisma.service'
+import { lockPageForWrite } from '../pages/page-write-lock'
 import { remapCmsLinks } from '../common/cms-link.util'
 import { validateBlockNavigation } from '../common/block-navigation.util'
 import { AssignPresetGroupDto, CreatePageFromPresetDto, CreatePresetDto, CreatePresetGroupDto, RenamePresetGroupDto, ResetPresetSelectionDto, UpdatePresetDto } from './presets.dto'
@@ -274,6 +275,7 @@ export class PresetsService {
 
   async applyPage(pageId: string, id: string) {
     await this.prisma.$transaction(async tx => {
+      await lockPageForWrite(tx, pageId)
       const page = await getPage(tx, pageId)
       const preset = await tx.cmsPreset.findFirst({ where: { id, kind: 'page', scope: pageId } })
       if (!preset) throw new NotFoundException('Preset không thuộc trang này')
@@ -287,6 +289,7 @@ export class PresetsService {
 
   async resetPage(pageId: string) {
     const result = await this.prisma.$transaction(async tx => {
+      await lockPageForWrite(tx, pageId)
       await getPage(tx, pageId)
       const baseline = await tx.cmsPresetPageBaseline.findUnique({ where: { pageId } })
       const sourceScope = baseline?.sourceScope ?? pageId
@@ -304,8 +307,9 @@ export class PresetsService {
     return { success: true, ...result }
   }
 
-  async createPage(id: string, input: CreatePageFromPresetDto) {
-    return this.prisma.$transaction(async tx => {
+  async createPage(id: string, input: CreatePageFromPresetDto, transaction?: Prisma.TransactionClient) {
+    const create = async (tx: Prisma.TransactionClient) => {
+      if (input.source_template_id) await lockPageForWrite(tx, input.source_template_id)
       const preset = await tx.cmsPreset.findFirst({ where: { id, kind: 'page' } })
       if (!preset) throw new NotFoundException('Không tìm thấy preset trang')
       if (await tx.page.findUnique({ where: { slug: input.slug }, select: { id: true } })) throw new BadRequestException('Đường dẫn trang đã tồn tại')
@@ -343,6 +347,7 @@ export class PresetsService {
       }
       await tx.cmsPresetPageBaseline.create({ data: { pageId: page.id, sourceScope: preset.scope, snapshot: json(baseline) } })
       return { id: page.id, slug: page.slug }
-    })
+    }
+    return transaction ? create(transaction) : this.prisma.$transaction(create)
   }
 }

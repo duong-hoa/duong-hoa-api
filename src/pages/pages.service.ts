@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common'
+import { BadRequestException, ConflictException, Injectable, NotFoundException } from '@nestjs/common'
 import { randomUUID } from 'node:crypto'
 import { Prisma } from '@prisma/client'
 import type { ContentBlock, Page, PageCategory } from '@prisma/client'
@@ -9,6 +9,7 @@ import { siteBlockKind, siteChromeMode, siteBlockLocalLinks, siteHeaderMissingLi
 import { remapCmsLinks } from '../common/cms-link.util'
 import { blockObject, copyBlockNavigation, namedBlockAnchor, preserveAnchorHistory, reservedBlockAnchors, validateBlockNavigation } from '../common/block-navigation.util'
 import { PageInputDto } from './dto/page-input.dto'
+import { lockPageForWrite } from './page-write-lock'
 import { PageCategoryInputDto } from './dto/page-category-input.dto'
 import { BlockInputDto, ReorderBlockDto } from './dto/block-input.dto'
 import { AssignBlockLayoutCollectionDto, BlockLayoutCollectionNameDto, CreatePageTemplateDto, PageTemplateCollectionNameDto, UpdatePageTemplateDto, UsePageTemplateDto } from './dto/page-template.dto'
@@ -140,10 +141,13 @@ export class PagesService {
   async getAdminPages() {
     const pages = await this.prisma.page.findMany({
       where: { isTemplate: false },
-      include: { category: { select: { id: true, name: true } } },
+      include: { category: { select: { id: true, name: true } }, agentDraft: { select: { publishedAt: true } } },
       orderBy: { sortOrder: 'asc' },
     })
-    return pages.map((page) => ({ ...toPageRow(page), page_categories: toCategoryJoin(page.category) }))
+    return pages.map(page => ({
+      ...toPageRow(page), page_categories: toCategoryJoin(page.category),
+      agent_review_required: !!page.agentDraft && !page.agentDraft.publishedAt,
+    }))
   }
 
   async getCmsLinkIndex() {
@@ -163,13 +167,19 @@ export class PagesService {
   }
 
   async getAdminPageBySlug(slug: string) {
-    const page = await this.prisma.page.findUnique({ where: { slug } })
+    const page = await this.prisma.page.findUnique({
+      where: { slug },
+      include: { agentDraft: { select: { publishedAt: true } } },
+    })
     if (!page) return { page: null, blocks: [] }
     const blocks = await this.prisma.contentBlock.findMany({
       where: { pageId: page.id },
       orderBy: { sortOrder: 'asc' },
     })
-    return { page: toPageRow(page), blocks: blocks.map(toBlockRow) }
+    return {
+      page: { ...toPageRow(page), agent_review_required: !!page.agentDraft && !page.agentDraft.publishedAt },
+      blocks: blocks.map(toBlockRow),
+    }
   }
 
   async createPage(input: PageInputDto) {
@@ -178,20 +188,32 @@ export class PagesService {
   }
 
   async updatePage(id: string, input: PageInputDto) {
-    const current = await this.prisma.page.findUnique({ where: { id }, select: { isTemplate: true } })
-    if (current?.isTemplate && input.is_published) throw new BadRequestException('Mẫu trang không thể xuất bản trực tiếp')
-    const page = await this.prisma.page
-      .update({ where: { id }, data: { ...pageInputToPrisma(input), updatedAt: new Date() } })
-      .catch(() => null)
-    return page ? toPageRow(page) : null
+    return this.prisma.$transaction(async tx => {
+      await lockPageForWrite(tx, id)
+      const current = await tx.page.findUnique({
+        where: { id },
+        select: { isTemplate: true, agentDraft: { select: { publishedAt: true } } },
+      })
+      if (!current) return null
+      if (current.isTemplate && input.is_published) throw new BadRequestException('Mẫu trang không thể xuất bản trực tiếp')
+      if (input.is_published && current.agentDraft && !current.agentDraft.publishedAt) {
+        throw new ConflictException('Hãy mở trình sửa trang và duyệt phiên bản bản nháp do Agent gửi trước khi xuất bản.')
+      }
+      const page = await tx.page.update({ where: { id }, data: { ...pageInputToPrisma(input), updatedAt: new Date() } })
+      return toPageRow(page)
+    })
   }
 
   async deletePage(id: string) {
-    await this.prisma.page.delete({ where: { id } })
+    await this.prisma.$transaction(async tx => {
+      await lockPageForWrite(tx, id)
+      await tx.page.delete({ where: { id } })
+    })
   }
 
-  async duplicatePage(id: string, input: PageInputDto) {
-    return this.prisma.$transaction(async (tx) => {
+  async duplicatePage(id: string, input: PageInputDto, transaction?: Prisma.TransactionClient) {
+    const duplicate = async (tx: Prisma.TransactionClient) => {
+      await lockPageForWrite(tx, id)
       const page = await tx.page.findUnique({ where: { id } })
       if (!page) throw new NotFoundException('Không tìm thấy trang gốc')
       const description = input.description === undefined ? page.description : input.description
@@ -227,7 +249,8 @@ export class PagesService {
       }
 
       return toPageRow(created)
-    })
+    }
+    return transaction ? duplicate(transaction) : this.prisma.$transaction(duplicate)
   }
 
   // Templates are unpublished page records so the existing block editor,
@@ -423,12 +446,16 @@ export class PagesService {
     return this.createPageTemplate({ name, source_page_id: id, collection_id: template.templateCollectionId })
   }
 
-  async usePageTemplate(id: string, input: UsePageTemplateDto) {
-    const template = await this.prisma.page.findFirst({ where: { id, isTemplate: true }, select: { id: true } })
-    if (!template) throw new NotFoundException('Không tìm thấy mẫu trang')
-    const existing = await this.prisma.page.findUnique({ where: { slug: input.slug }, select: { id: true } })
-    if (existing) throw new BadRequestException('Đường dẫn trang đã tồn tại')
-    return this.duplicatePage(id, { slug: input.slug, title: input.title })
+  async usePageTemplate(id: string, input: UsePageTemplateDto, transaction?: Prisma.TransactionClient) {
+    const useTemplate = async (tx: Prisma.TransactionClient) => {
+      await lockPageForWrite(tx, id)
+      const template = await tx.page.findFirst({ where: { id, isTemplate: true }, select: { id: true } })
+      if (!template) throw new NotFoundException('Không tìm thấy mẫu trang')
+      const existing = await tx.page.findUnique({ where: { slug: input.slug }, select: { id: true } })
+      if (existing) throw new BadRequestException('Đường dẫn trang đã tồn tại')
+      return this.duplicatePage(id, { slug: input.slug, title: input.title }, tx)
+    }
+    return transaction ? useTemplate(transaction) : this.prisma.$transaction(useTemplate)
   }
 
   // ── Admin: blocks ────────────────────────────────────────────────────
@@ -436,7 +463,7 @@ export class PagesService {
   async createBlock(input: BlockInputDto) {
     if (!input.page_id) throw new NotFoundException('page_id is required')
     return this.prisma.$transaction(async tx=>{
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${input.page_id!}))`
+      await lockPageForWrite(tx, input.page_id!)
       const siblings=await tx.contentBlock.findMany({where:{pageId:input.page_id},select:{id:true,blockType:true,content:true}})
       const used=new Set(siblings.flatMap(block=>[block.id,...reservedBlockAnchors(block.content,block.blockType)]))
       let id:string|undefined,content=input.content
@@ -458,11 +485,11 @@ export class PagesService {
     })
   }
 
-  async updateBlock(id: string, input: BlockInputDto) {
-    return this.prisma.$transaction(async tx=>{
+  async updateBlock(id: string, input: BlockInputDto, transaction?: Prisma.TransactionClient) {
+    const update = async (tx: Prisma.TransactionClient) => {
       const parent=await tx.contentBlock.findUnique({where:{id},select:{pageId:true}})
       if(!parent)return null
-      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${parent.pageId}))`
+      await lockPageForWrite(tx, parent.pageId)
       const current=await tx.contentBlock.findUnique({where:{id}})
       if(!current)return null
       let content=input.content
@@ -479,22 +506,34 @@ export class PagesService {
       }
       const block=await tx.contentBlock.update({where:{id},data:{...blockInputToPrisma(input),...(content!==undefined?{content:content as Prisma.InputJsonValue}:{}),updatedAt:new Date()}})
       return toBlockRow(block)
-    })
+    }
+    return transaction ? update(transaction) : this.prisma.$transaction(update)
   }
 
   async deleteBlock(id: string) {
-    await this.prisma.contentBlock.delete({ where: { id } })
+    await this.prisma.$transaction(async tx => {
+      const parent = await tx.contentBlock.findUnique({ where: { id }, select: { pageId: true } })
+      if (parent) await lockPageForWrite(tx, parent.pageId)
+      await tx.contentBlock.delete({ where: { id } })
+    })
   }
 
-  async reorderBlocks(orderedBlocks: ReorderBlockDto[]) {
-    await this.prisma.$transaction(
-      orderedBlocks.map((block) =>
-        this.prisma.contentBlock.update({
+  async reorderBlocks(orderedBlocks: ReorderBlockDto[], transaction?: Prisma.TransactionClient) {
+    const reorder = async (tx: Prisma.TransactionClient) => {
+      const parents = await tx.contentBlock.findMany({
+        where: { id: { in: orderedBlocks.map(block => block.id) } },
+        select: { pageId: true },
+        distinct: ['pageId'],
+      })
+      for (const pageId of parents.map(parent => parent.pageId).sort()) await lockPageForWrite(tx, pageId)
+      for (const block of orderedBlocks) {
+        await tx.contentBlock.update({
           where: { id: block.id },
           data: { sortOrder: block.sort_order, updatedAt: new Date() },
-        }),
-      ),
-    )
+        })
+      }
+    }
+    return transaction ? reorder(transaction) : this.prisma.$transaction(reorder)
   }
 
   // ── Admin: page categories ───────────────────────────────────────────
