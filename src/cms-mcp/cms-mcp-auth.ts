@@ -2,6 +2,7 @@ import { Injectable, Logger } from '@nestjs/common'
 import { ConfigService } from '@nestjs/config'
 import { createRemoteJWKSet, jwtVerify } from 'jose'
 import { z } from 'zod'
+import { CmsMcpClientCredentials } from './cms-mcp-client-credentials'
 
 const scope = z.enum(['cms:read', 'cms:draft', 'cms:media', 'cms:review'])
 export type CmsMcpScope = z.infer<typeof scope>
@@ -33,19 +34,44 @@ function configuredUrl(raw: string | undefined, local: boolean) {
 @Injectable()
 export class CmsMcpAuth {
   private readonly logger = new Logger(CmsMcpAuth.name)
+  private machine?: CmsMcpClientCredentials
   private options?: {
     issuer: string
     resource: string
     metadata: string
     origins: Set<string>
     agents: Array<z.infer<typeof agentConfig>>
-    jwks: ReturnType<typeof createRemoteJWKSet>
+    jwks: ReturnType<typeof createRemoteJWKSet> | CmsMcpClientCredentials['verification']
   }
 
   constructor(config: ConfigService) {
-    if (config.get('CMS_MCP_ENABLED') !== 'true') return
+    const service = config.get<string>('CMS_MCP_SERVICE')
+    if (config.get('CMS_MCP_ENABLED') === 'false' || (!service && config.get('CMS_MCP_ENABLED') !== 'true')) return
     try {
       const local = config.get('NODE_ENV') !== 'production'
+      if (service) {
+        const configuration = z.object({
+          issuer: z.string(),
+          privateKey: z.string().min(1000).max(5000),
+          clients: z.array(agentConfig.extend({ secretHash: z.string().regex(/^[a-f0-9]{64}$/) })).min(1).max(20),
+        }).strict().parse(JSON.parse(service))
+        const issuer = configuredUrl(configuration.issuer, local)
+        const clients = configuration.clients
+        if (configuration.issuer !== issuer.origin ||
+          new Set(clients.map(client => client.clientId)).size !== clients.length ||
+          new Set(clients.map(client => client.key)).size !== clients.length ||
+          clients.some(client => !client.scopes.includes('cms:read'))) throw new Error('Invalid MCP service configuration')
+        this.machine = new CmsMcpClientCredentials(issuer.origin, configuration.privateKey, clients)
+        this.options = {
+          issuer: issuer.origin,
+          resource: this.machine.resource,
+          metadata: issuer.origin + '/.well-known/oauth-protected-resource/mcp',
+          origins: new Set([issuer.origin]),
+          agents: clients,
+          jwks: this.machine.verification,
+        }
+        return
+      }
       const issuer = config.get<string>('CMS_MCP_OAUTH_ISSUER')
       const issuerUrl = configuredUrl(issuer, local)
       const resource = configuredUrl(config.get<string>('CMS_MCP_RESOURCE_URL'), local)
@@ -72,6 +98,7 @@ export class CmsMcpAuth {
   }
 
   get enabled() { return !!this.options }
+  get service() { return this.machine }
 
   get metadata() {
     if (!this.options) return null

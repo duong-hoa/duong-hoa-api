@@ -19,6 +19,30 @@ export class CmsMcpController {
     return response.json(metadata)
   }
 
+  @Get('.well-known/oauth-authorization-server')
+  oauthMetadata(@Res() response: Response) {
+    response.set('Cache-Control', 'no-store')
+    return this.auth.service ? response.json(this.auth.service.metadata) : response.sendStatus(404)
+  }
+
+  @Get('.well-known/mcp-jwks.json')
+  signingKeys(@Res() response: Response) {
+    response.set('Cache-Control', 'no-store')
+    return this.auth.service ? response.json(this.auth.service.jwks) : response.sendStatus(404)
+  }
+
+  @Post('api/mcp/oauth/token')
+  async token(@Req() request: Request, @Res() response: Response) {
+    response.set({ 'Cache-Control': 'no-store', Pragma: 'no-cache' })
+    const service = this.auth.service
+    if (!service) return response.sendStatus(404)
+    if (!this.auth.allowsOrigin(request.get('Origin'))) return response.sendStatus(403)
+    if (!request.is('application/x-www-form-urlencoded')) return response.status(400).json({ error: 'invalid_request' })
+    const result = await service.issue(request.get('Authorization'), request.body)
+    if (result.status === 401) response.set('WWW-Authenticate', 'Basic realm="Duong Hoa MCP"')
+    return response.status(result.status).json(result.body)
+  }
+
   @All('mcp')
   async handle(@Req() request: Request, @Res() response: Response) {
     response.set('Cache-Control', 'no-store')

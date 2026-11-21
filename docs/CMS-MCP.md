@@ -36,6 +36,12 @@ Issuer phải phát JWT access token có `typ: at+jwt`, chữ ký RS256 hoặc E
 - `cms:media` cho phép đọc thư viện media của dự án và thay media bằng mục đã đăng ký hoặc trường media của block Agent được đọc. Tệp mới đi qua trình tải ảnh/video CMS.
 - `cms:review` cho phép gửi nháp lên trình sửa CMS. Thao tác xuất bản dùng quyền quản trị viên CMS và phiên đăng nhập CMS. Token Agent có audience MCP riêng.
 
+## OAuth cho Agent tự động trên Dương Hòa
+
+Nếu không có issuer OAuth bên ngoài, đặt secret `CMS_MCP_SERVICE` trên riêng API Dương Hòa. Secret là JSON gồm `issuer` (origin HTTPS chính xác), `privateKey` (RSA PKCS#8 DER base64), và `clients`. Mỗi client có `key`, `subject`, `clientId`, `sourcePageIds`, `scopes` tương tự ở trên cùng `secretHash` (SHA-256 hex của client secret ngẫu nhiên có entropy cao). Web chỉ chuyển tiếp các đường dẫn MCP và OAuth đã định danh.
+
+Agent tự động đọc metadata tại `/.well-known/oauth-authorization-server`. Gửi form `grant_type=client_credentials`, `resource=<origin>/mcp` và `scope` tới `/api/mcp/oauth/token`, với xác thực OAuth `client_secret_basic`. Token có hạn 5 phút. Client gửi Bearer token tới `/mcp`. Mặc định chỉ cấp `cms:read` khi không yêu cầu scope. Luồng này dành cho Agent có khả năng dùng client credentials, chưa cung cấp đăng nhập OAuth tương tác của người dùng.
+
 ## Công cụ và luồng duyệt
 
 | Công cụ | Sử dụng |
