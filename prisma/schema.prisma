@@ -37,6 +37,7 @@ model Page {
   category           PageCategory?           @relation(fields: [categoryId], references: [id], onDelete: SetNull)
   templateCollection PageTemplateCollection? @relation(fields: [templateCollectionId], references: [id], onDelete: SetNull)
   presetBaseline     CmsPresetPageBaseline?
+  agentDraft         CmsAgentDraft?
 
   @@index([isTemplate, updatedAt])
   @@index([templateCollectionId, isTemplate])
@@ -263,6 +264,21 @@ model AdminUser {
   @@map("admin_users")
 }
 
+model CmsAgentDraft {
+  pageId            String    @id @map("page_id") @db.Uuid
+  agentKey          String    @map("agent_key")
+  createKey         String    @map("create_key") @db.Uuid
+  createSignature   String    @map("create_signature")
+  submittedRevision String?   @map("submitted_revision")
+  reviewNote        String?   @map("review_note")
+  submittedAt       DateTime? @map("submitted_at") @db.Timestamptz
+  publishedAt       DateTime? @map("published_at") @db.Timestamptz
+  page              Page      @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([agentKey, createKey])
+  @@map("cms_agent_drafts")
+}
+
 model ActivityLog {
   id          String   @id @default(uuid()) @db.Uuid
   // No FK: rows survive account deletion for audit purposes.
@@ -277,5 +293,6 @@ model ActivityLog {
   createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz
 
   @@index([userId])
+  @@index([targetTable, targetId, createdAt])
   @@map("activity_logs")
 }

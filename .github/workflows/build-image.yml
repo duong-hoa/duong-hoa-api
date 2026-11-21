@@ -5,6 +5,12 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      publish_production:
+        description: "Promote :prod only after explicit production release approval"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -50,8 +56,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Publish production channel
-        if: github.ref == 'refs/heads/main'
+      - name: Record commit image
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: echo "${IMAGE}@${IMAGE_DIGEST}" >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Publish production channel (explicit approval only)
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.publish_production == true
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}

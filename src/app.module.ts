@@ -13,6 +13,7 @@ import { MediaModule } from './media/media.module'
 import { StorageModule } from './storage/storage.module'
 import { TranslateModule } from './translate/translate.module'
 import { PresetsModule } from './presets/presets.module'
+import { CmsMcpModule } from './cms-mcp/cms-mcp.module'
 
 @Module({
   imports: [
@@ -30,6 +31,7 @@ import { PresetsModule } from './presets/presets.module'
     StorageModule,
     TranslateModule,
     PresetsModule,
+    CmsMcpModule,
   ],
 })
 export class AppModule {}
